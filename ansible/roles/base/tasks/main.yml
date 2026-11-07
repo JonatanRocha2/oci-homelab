@@ -1,0 +1,77 @@
+---
+- name: Confirmar o usuario de SSH antes de alterar o sshd
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ base_ssh_allow_user }}"
+
+- name: Instalar atualizacoes de seguranca automaticas
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ativar a rotina periodica do apt
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Limitar o unattended-upgrades a origem de seguranca
+  ansible.builtin.template:
+    src: 52homelab-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52homelab-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ler o drop-in atual do sshd
+  ansible.builtin.slurp:
+    src: /etc/ssh/sshd_config.d/00-homelab.conf
+  register: base_sshd_previous
+  failed_when: false
+  changed_when: false
+
+- name: Aplicar o drop-in de SSH e recarregar somente se a configuracao for valida
+  block:
+    - name: Instalar o drop-in de SSH
+      ansible.builtin.template:
+        src: 00-homelab.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-homelab.conf
+        owner: root
+        group: root
+        mode: "0644"
+      register: base_sshd_dropin
+
+    - name: Validar a configuracao completa do sshd
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Recarregar o ssh
+      ansible.builtin.systemd:
+        name: ssh
+        state: reloaded
+      when: base_sshd_dropin.changed
+  rescue:
+    - name: Restaurar o drop-in anterior do sshd
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-homelab.conf
+        content: "{{ base_sshd_previous.content | b64decode }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: base_sshd_previous.content is defined
+
+    - name: Remover o drop-in invalido quando nao havia arquivo anterior
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-homelab.conf
+        state: absent
+      when: base_sshd_previous.content is not defined
+
+    - name: Interromper apos restaurar o sshd
+      ansible.builtin.fail:
+        msg: >-
+          sshd -t rejeitou a configuracao. O arquivo anterior foi restaurado
+          e o servico ssh nao foi recarregado.

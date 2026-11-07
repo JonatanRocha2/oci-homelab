@@ -1,0 +1,16 @@
+# Drop-in carregado antes dos demais. O sshd usa o primeiro valor encontrado.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PermitRootLogin no
+X11Forwarding no
+AllowTcpForwarding yes
+AllowAgentForwarding no
+GatewayPorts no
+PermitTunnel no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowUsers {{ base_ssh_allow_user }}

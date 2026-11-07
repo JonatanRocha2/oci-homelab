@@ -1,0 +1,50 @@
+# OpenTofu state, plans, and local overrides. Never commit these.
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+.terraform/
+.terraform.lock.info
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Private variable files. Examples are allowed.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Credentials, environment files, and keys.
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.p12
+*.pfx
+
+# Kubernetes client material.
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+k3s.yaml
+**/k3s.yaml
+
+# Ansible local inventory and caches.
+ansible/inventories/local/
+.ansible/
+*.retry
+
+# Local tool environments.
+.venv/
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,7 @@
+---
+k3s_enabled: false
+k3s_version: "v1.37.2+k3s1"
+k3s_sha256_arm64: "a779ccf1e5e2e33a62f5a29c2f1c0bbf99431e100579d4c10f0aa0742a6aa84b"
+k3s_install_sha256: "ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b"
+k3s_binary_url: "https://github.com/k3s-io/k3s/releases/download/v1.37.2%2Bk3s1/k3s-arm64"
+k3s_install_url: "https://raw.githubusercontent.com/k3s-io/k3s/v1.37.2%2Bk3s1/install.sh"

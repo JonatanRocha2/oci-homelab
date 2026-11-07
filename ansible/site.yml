@@ -1,0 +1,8 @@
+---
+- name: Preparar o servidor do homelab
+  hosts: homelab
+  gather_facts: true
+  roles:
+    - role: base
+    - role: k3s
+      when: k3s_enabled | bool
