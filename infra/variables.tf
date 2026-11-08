@@ -1,10 +1,10 @@
 variable "compartment_ocid" {
   type        = string
-  description = "OCID do compartment onde a VCN e a instancia serao criadas. Nao crie o compartment por este codigo."
+  description = "OCID de um compartment existente. O compartment raiz e o OCID da tenancy. Um filho usa o tipo compartment. Este codigo nao cria compartment."
 
   validation {
-    condition     = can(regex("^ocid1\\.compartment\\.oc1\\.\\.[A-Za-z0-9._-]+$", var.compartment_ocid))
-    error_message = "compartment_ocid precisa ser um OCID de compartment no formato ocid1.compartment.oc1..<unico>."
+    condition     = can(regex("^ocid1\\.(compartment|tenancy)\\.oc1\\.\\.[A-Za-z0-9._-]+$", var.compartment_ocid))
+    error_message = "compartment_ocid precisa ser o OCID do compartment raiz, ocid1.tenancy.oc1..<unico>, ou de um compartment filho, ocid1.compartment.oc1..<unico>. Outros tipos, outros realms e OCIDs com regiao sao recusados."
   }
 }
 

@@ -279,6 +279,46 @@ run "recusa_chave_adicional_repetida" {
   expect_failures = [var.additional_ssh_public_keys]
 }
 
+run "recusa_ocid_de_instancia_como_compartment" {
+  command = plan
+  variables {
+    compartment_ocid = "ocid1.instance.oc1.sa-saopaulo-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.compartment_ocid]
+}
+
+run "recusa_ocid_de_usuario_como_compartment" {
+  command = plan
+  variables {
+    compartment_ocid = "ocid1.user.oc1..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.compartment_ocid]
+}
+
+run "recusa_tenancy_com_regiao" {
+  command = plan
+  variables {
+    compartment_ocid = "ocid1.tenancy.oc1.sa-saopaulo-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.compartment_ocid]
+}
+
+run "recusa_compartment_sem_regiao_em_branco" {
+  command = plan
+  variables {
+    compartment_ocid = "ocid1.compartment.oc1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.compartment_ocid]
+}
+
+run "recusa_tenancy_de_outro_realm" {
+  command = plan
+  variables {
+    compartment_ocid = "ocid1.tenancy.oc2..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [var.compartment_ocid]
+}
+
 run "recusa_imagem_de_outra_regiao" {
   command = plan
   variables {
