@@ -1,0 +1,9 @@
+# Copie para infra/backend.hcl, que o Git ignora. Nao coloque chave aqui.
+# O id e o segredo do customer secret key ficam em OCI_CUSTOMER_SECRET_KEY_ID
+# e OCI_CUSTOMER_SECRET_KEY. Essa chave e so do bucket, nao a chave de API.
+bucket = "SUBSTITUA"
+region = "sa-saopaulo-1"
+
+endpoints = {
+  s3 = "https://SUBSTITUA.compat.objectstorage.sa-saopaulo-1.oraclecloud.com"
+}

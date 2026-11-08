@@ -1,0 +1,158 @@
+name: homelab
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: plan gera o plano cifrado. apply continua so com aprovacao manual.
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+      plan_run_id:
+        description: Numero da execucao de plan. Obrigatorio para apply.
+        required: false
+        type: string
+        default: ""
+      git_sha:
+        description: SHA completo gravado no plano. Obrigatorio para apply.
+        required: false
+        type: string
+        default: ""
+      acknowledge_empty_state:
+        description: Primeiro uso, quando o estado remoto ainda nao tem recursos. Nao libera outro estado.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-homelab-state
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: >
+      github.repository == 'JonatanRocha2/oci-homelab' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'plan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: homelab-plan
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install OpenTofu
+        shell: bash
+        run: bash scripts/install-tofu.sh
+
+      - name: Plan
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CUSTOMER_SECRET_KEY_ID: ${{ secrets.OCI_CUSTOMER_SECRET_KEY_ID }}
+          OCI_CUSTOMER_SECRET_KEY: ${{ secrets.OCI_CUSTOMER_SECRET_KEY }}
+          HOMELAB_BACKEND_CONFIG: ${{ secrets.HOMELAB_BACKEND_CONFIG }}
+          HOMELAB_TFVARS: ${{ secrets.HOMELAB_TFVARS }}
+          HOMELAB_PLAN_PASSPHRASE: ${{ secrets.HOMELAB_PLAN_PASSPHRASE }}
+          OCI_REGION: sa-saopaulo-1
+          ALLOW_EMPTY_STATE: ${{ inputs.acknowledge_empty_state }}
+        run: bash scripts/ci-plan.sh
+
+      - name: Upload encrypted plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: homelab-plan
+          path: ${{ runner.temp }}/homelab-plan.enc
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  apply:
+    if: >
+      github.repository == 'JonatanRocha2/oci-homelab' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'apply' &&
+      inputs.git_sha != '' &&
+      inputs.plan_run_id != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: homelab-apply
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check apply inputs
+        shell: bash
+        env:
+          GIT_SHA: ${{ inputs.git_sha }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "${GIT_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PLAN_RUN_ID}" =~ ^[0-9]+$ ]]
+
+      - name: Checkout planned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.git_sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install OpenTofu
+        shell: bash
+        run: bash scripts/install-tofu.sh
+
+      - name: Record approval and plan run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          GIT_SHA: ${{ inputs.git_sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" > "${RUNNER_TEMP}/approvals.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PLAN_RUN_ID}" > "${RUNNER_TEMP}/plan-run.json"
+          python3 scripts/pipeline_checks.py require-approval --file "${RUNNER_TEMP}/approvals.json" --actor "${GITHUB_ACTOR}"
+          python3 scripts/pipeline_checks.py verify-run --run "${RUNNER_TEMP}/plan-run.json" --sha "${GIT_SHA}"
+
+      - name: Download encrypted plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: homelab-plan
+          path: ${{ runner.temp }}/plan-artifact
+          run-id: ${{ inputs.plan_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Apply saved plan
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CUSTOMER_SECRET_KEY_ID: ${{ secrets.OCI_CUSTOMER_SECRET_KEY_ID }}
+          OCI_CUSTOMER_SECRET_KEY: ${{ secrets.OCI_CUSTOMER_SECRET_KEY }}
+          HOMELAB_BACKEND_CONFIG: ${{ secrets.HOMELAB_BACKEND_CONFIG }}
+          HOMELAB_PLAN_PASSPHRASE: ${{ secrets.HOMELAB_PLAN_PASSPHRASE }}
+          OCI_REGION: sa-saopaulo-1
+          ALLOW_EMPTY_STATE: ${{ inputs.acknowledge_empty_state }}
+          GIT_SHA: ${{ inputs.git_sha }}
+          APPROVALS_FILE: ${{ runner.temp }}/approvals.json
+          PLAN_RUN_FILE: ${{ runner.temp }}/plan-run.json
+          PLAN_BUNDLE: ${{ runner.temp }}/plan-artifact/homelab-plan.enc
+        run: bash scripts/ci-apply.sh

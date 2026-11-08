@@ -132,51 +132,64 @@ Voce cria a chave e a policy fora deste repositorio, na console, se ainda nao ex
 3. Uma policy no compartment, criada por um administrador da tenancy, no minimo:
 
 ```text
-Allow group <grupo> to manage instance-family in compartment <compartment>
-Allow group <grupo> to manage volume-family in compartment <compartment>
-Allow group <grupo> to manage virtual-network-family in compartment <compartment>
+Allow group <grupo> to manage instances in compartment <compartment>
 Allow group <grupo> to read instance-images in compartment <compartment>
 Allow group <grupo> to inspect compartments in tenancy
+Allow group <grupo> to manage vcns in compartment <compartment>
+Allow group <grupo> to manage subnets in compartment <compartment>
+Allow group <grupo> to manage internet-gateways in compartment <compartment>
+Allow group <grupo> to manage route-tables in compartment <compartment>
+Allow group <grupo> to manage security-lists in compartment <compartment>
+Allow group <grupo> to manage dhcp-options in compartment <compartment>
+Allow group <grupo> to use vnics in compartment <compartment>
+Allow group <grupo> to use private-ips in compartment <compartment>
+Allow group <grupo> to use network-security-groups in compartment <compartment>
+Allow group <grupo> to manage volumes in compartment <compartment>
+Allow group <grupo> to read buckets in compartment <compartment> where target.bucket.name='<bucket>'
+Allow group <grupo> to manage objects in compartment <compartment> where target.bucket.name='<bucket>'
+Allow service objectstorage-<regiao> to manage object-family in compartment <compartment> where target.bucket.name='<bucket>'
 ```
 
-`manage virtual-network-family` cobre VCN, subnet, internet gateway, route table e security list. E amplo dentro de um compartment e nao deve ser aplicado na tenancy inteira se der para evitar. Este repositorio nao cria grupo, usuario, policy nem chave.
+O grupo nao recebe `manage all-resources`, administracao de usuarios, nem `manage buckets`. A ultima linha existe so para o ciclo de vida apagar versoes anteriores e uploads multipart incompletos; ela nao e do usuario de CI. `use private-ips` cobre o IPv4 efemero. Nao ha `manage public-ips`, entao o usuario nao cria IPv4 reservado. Este repositorio nao cria grupo, usuario, policy nem chave.
 
 A consulta de availability domain e a listagem de imagens de plataforma usam o mesmo compartment. A listagem de imagens de plataforma aceita o OCID do compartment em que voce tem `read instance-images`.
 
-## Estado local
+## Estado
 
-O backend e local, em `infra/terraform.tfstate`. Esse arquivo, o backup automatico e qualquer `*.tfplan` estao no `.gitignore`. O estado guarda OCID e o IP publico. Perder o arquivo faz o proximo plano querer criar tudo de novo.
+O backend configurado no codigo e S3 compativel, com `use_lockfile`, trava nativa do OpenTofu e sem tabela extra. O bucket, a regiao e o endpoint nao entram no Git. Eles ficam em `infra/backend.hcl`, copiado de `infra/backend.hcl.example`, ou no segredo `HOMELAB_BACKEND_CONFIG`. O arquivo de exemplo usa `SUBSTITUA` de proposito.
 
-Antes do primeiro apply, e de novo antes de cada apply posterior, copie o estado para fora do repositorio, em um disco seu e cifrado, se ele ja existir:
+O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para.
 
-```bash
-cp -a infra/terraform.tfstate \
-  "$HOME/backups-oci-homelab/terraform.tfstate.$(date +%Y%m%d%H%M%S)"
-```
+`use_lockfile` fica ligado. O OpenTofu pede `If-None-Match` no `PutObject` do backend S3. A pagina de compatibilidade S3 da OCI lista `PutObject` e nao lista esse header. Um teste concorrente, com objeto temporario depois apagado, mostrou o comportamento: o segundo `PutObject` com `If-None-Match` respondeu 412 e nao substituiu o corpo; depois da remocao, um novo `PutObject` condicional respondeu 200. A concorrencia do GitHub so enfileira execucoes deste workflow e nao substitui essa trava.
 
-Nao ha backend remoto. Nao suba o estado para o Git nem para um artifact da CI.
+O OpenTofu 1.13 deste repositorio nao tem backend de Object Storage da OCI. A lista oficial diz que so os backends embutidos existem, e o binario nao registra `backend "oci"`. O "OCI" do OpenTofu 1.10 e registro de container, nao estado da Oracle. O backend usado e o S3 compativel, com bucket e endpoint fora do Git.
 
-## Plano manual e apply separado
+Este codigo nao cria bucket, chave nem policy. A pagina Always Free, depois do trial, lista 20 GB combinados e 50.000 requisicoes por mes. Na mesma pagina, conta paga ou trial com credito lista 10 GB standard, 10 GB infrequent e 10 GB archive, com as mesmas 50.000 requisicoes. O bucket de estado e Standard, privado, na home region, sem chave KMS e sem acesso publico. O namespace da conta nao entra no repositorio.
 
-Nao ha alvo de apply. A CI nao planeja na nuvem e nao aplica. Quando for a hora, no seu computador, com o `~/.oci/config` ja criado por voce:
+Nao suba estado, plano ou chave para o Git. O artifact do plano e cifrado. Artifact de repositorio publico pode ser lido por qualquer pessoa; por isso o arquivo publicado e so `homelab-plan.enc`.
+
+## Plano e apply
+
+O caminho suportado e `.github/workflows/homelab.yml`, disparado a mao em `main`. Push e pull request nao planejam e nao aplicam. Nao ha workflow de destroy.
+
+`operation=plan` usa o ambiente `homelab-plan` e grava o plano cifrado. O resumo publicado lista shape, tamanho e contagem de regras. Nao lista OCID, chave nem o CIDR de origem do SSH. O workflow nao define `public_ipv4_pricing_acknowledged`. Esse valor so pode vir do `HOMELAB_TFVARS` que voce gravar, e continua sendo o reconhecimento de que o preco do IPv4 efemero nao ficou provado. Nao e garantia de custo zero.
+
+`operation=apply` usa o ambiente `homelab-apply`. O disparo nao conta como aprovacao. O script so continua quando a API de approvals tem um registro `approved` desse ambiente e o login de quem aprovou. Esse login pode ser o de quem disparou o workflow. Lista vazia, pendente, rejeitada ou sem login falha. O plano aplicado e o arquivo cifrado da execucao informada: o SHA, o hash e a lineage e o serial do estado precisam conferir. Plano com delete, replace ou recurso fora da lista fechada nao segue.
+
+A autenticacao do workflow e a chave de API documentada pelo provider, `OCI_AUTH=APIKey`, com tenancy, usuario, fingerprint, caminho da chave e regiao. A troca de JWT por RPST saiu do workflow: ela pede aplicacao confidencial, segredo de cliente e Identity Propagation Trust, e nao foi executada. A chave que ja assina a CLI permanece so na maquina local. A chave do workflow, quando existir, e outra, de um usuario novo no grupo da policy acima. O customer secret key do bucket e dessa mesma identidade nova, nao da chave de API.
+
+No seu computador, o plano local ainda usa a chave de API do `~/.oci/config`. Ele precisa do mesmo backend, senao aponta para outro estado:
 
 ```bash
 cd infra
 cp terraform.tfvars.example terraform.tfvars
-# edite terraform.tfvars; o arquivo e ignorado pelo Git
-tofu init
+cp backend.hcl.example backend.hcl
+# edite os dois; os arquivos reais sao ignorados pelo Git
+tofu init -backend-config=backend.hcl
 tofu plan -out=homelab.tfplan
 ```
 
-Leia o plano inteiro. Ele deve mostrar uma VCN, um internet gateway, uma route table, duas security lists (a da subnet e a padrao esvaziada), uma subnet e uma instancia. Confira 2 OCPUs, 12 GB, boot de 50 GB, 10 VPU/GB, um IPv4 efemero, a imagem Ubuntu 24.04 aarch64 e a origem de SSH. Nao deve aparecer NAT, balanceador, IP reservado, volume solto nem backup.
-
-So num segundo comando, depois dessa leitura, e se voce decidir criar os recursos:
-
-```bash
-tofu apply homelab.tfplan
-```
-
-`homelab.tfplan` tambem fica de fora do Git. Apagar a instancia nao esta automatizado. Se um dia for preciso liberar cota, esse destroy e uma decisao a parte, com backup do estado feito antes.
+Um apply local nao passa pela aprovacao nem pela conferencia do plano salvo. Nao use o apply local contra este estado.
 
 ## Ansible
 
@@ -219,9 +232,17 @@ ssh -L 6443:127.0.0.1:6443 ubuntu@IP_PUBLICO
 
 Se precisar do arquivo na sua maquina, copie por esse SSH, troque o endereco do servidor e guarde fora do repositorio com modo `0600`. Nao faca commit.
 
+## O que este codigo deixa pronto
+
+O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. O usuario limitado, as chaves e o bucket privado existem fora do Git. Nenhum secret foi gravado no GitHub: a API de ambientes respondeu 403 e pediu `administration=write`. A protecao de `main` tambem respondeu 403, em leitura, e nao foi alterada.
+
+O workflow de plano ainda nao esta em `main`. Por isso nao houve `workflow_dispatch`. O plano local, sem apply, ficou pronto. O apply continua dependendo do clique Approve and deploy depois que o ambiente existir.
+
+Pull request, inclusive de fork, continua so em `validate.yml`: `contents: read`, sem segredo, sem `id-token` e sem ambiente.
+
 ## CI
 
-`.github/workflows/validate.yml` so tem `contents: read`. Instala o OpenTofu 1.13.9 conferindo o SHA-256, instala Ansible pelos pins de `requirements-ci.txt` e roda `scripts/ci.sh`. Isso faz `tofu fmt -check`, `tofu init -backend=false`, `tofu validate`, `tofu test` e o lint do Ansible. Nao ha segredo, plano, estado nem apply.
+`.github/workflows/validate.yml` so tem `contents: read`. Instala o OpenTofu 1.13.9 conferindo o SHA-256, instala Ansible pelos pins de `requirements-ci.txt` e roda `scripts/ci.sh`. Isso faz a conferencia do repositorio, os testes do gate de aprovacao, `tofu fmt -check`, `tofu init -backend=false`, `tofu validate`, `tofu test` e o lint do Ansible. Nao ha segredo, plano remoto nem apply nesse workflow.
 
 O provider `oracle/oci` 9.12.1 esta em `infra/.terraform.lock.hcl`, com hashes para Linux e macOS em amd64 e arm64.
 
@@ -232,18 +253,17 @@ Com a maquina sem `~/.oci/config` e sem variavel de credencial OCI:
 - `tofu fmt -check`
 - `tofu init -backend=false`
 - `tofu validate`
-- `tofu test`: 31 cenarios com o provider simulado, sem API da OCI
+- `tofu test`: 42 cenarios com o provider simulado, sem API da OCI
 - `ansible-lint` no perfil moderate, que passou no perfil production
 - `ansible-playbook --syntax-check` no inventario de exemplo
-- `scripts/check-repository.sh`, que recusa estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra e apply no workflow
+- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`: fixtures locais. Aprovacao do mesmo login passa; lista vazia, pendente e sem login falham. A sessao de chave de API e gravada num diretorio temporario e nao chama a OCI. A cifra do plano usa openssl local. Nenhum desses testes fala com a API S3 nem com o GitHub
 
 Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU, a escolha da imagem aarch64 mais nova, a recusa de Minimal e amd64, a recusa de um availability domain que a consulta nao devolveu, e as recusas de CIDR, shape, memoria, disco, VPU, home region, confirmacoes e chave privada.
 
 ## O que nao foi testado
 
-- `tofu plan` ou `tofu apply` contra uma tenancy
-- a consulta real de imagem e de availability domain
-- home region, cota restante, capacidade e Cost Analysis
-- SSH, apt, reload do sshd e instalacao do k3s numa VM
-- se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na sua fatura
-- a policy IAM, porque ela nao deve ser criada por este codigo
+- `tofu apply`, a VM, a rede e qualquer recurso de compute ou volume
+- SSH, apt, reload do sshd e instalacao do k3s
+- se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na fatura; o plano so carrega o reconhecimento
+- `workflow_dispatch` e os ambientes do GitHub; a aprovacao foi exercitada com fixtures
+- capacidade de host e Cost Analysis
