@@ -158,7 +158,7 @@ A consulta de availability domain e a listagem de imagens de plataforma usam o m
 
 O backend configurado no codigo e S3 compativel, com `use_lockfile`, trava nativa do OpenTofu e sem tabela extra. O bucket, a regiao e o endpoint nao entram no Git. Eles ficam em `infra/backend.hcl`, copiado de `infra/backend.hcl.example`, ou no segredo `HOMELAB_BACKEND_CONFIG`. O arquivo de exemplo usa `SUBSTITUA` de proposito.
 
-O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para.
+O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para. O primeiro estado remoto ainda nao gravado vem com lineage vazia e serial 0. Esse par so passa quando nao ha recursos e `acknowledge_empty_state` esta marcado.
 
 `use_lockfile` fica ligado. O OpenTofu pede `If-None-Match` no `PutObject` do backend S3. A pagina de compatibilidade S3 da OCI lista `PutObject` e nao lista esse header. Um teste concorrente, com objeto temporario depois apagado, mostrou o comportamento: o segundo `PutObject` com `If-None-Match` respondeu 412 e nao substituiu o corpo; depois da remocao, um novo `PutObject` condicional respondeu 200. A concorrencia do GitHub so enfileira execucoes deste workflow e nao substitui essa trava.
 
