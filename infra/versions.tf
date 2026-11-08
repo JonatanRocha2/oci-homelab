@@ -8,8 +8,17 @@ terraform {
     }
   }
 
-  # Estado local de proposito. Nao ha backend remoto neste fundamento.
-  backend "local" {
-    path = "terraform.tfstate"
+  # O bucket, a regiao e o endpoint ficam fora do repositorio, em
+  # -backend-config. Sem isso o init do plano remoto para. Nao ha
+  # fallback para estado local vazio.
+  backend "s3" {
+    key                         = "oci-homelab/terraform.tfstate"
+    use_lockfile                = true
+    use_path_style              = true
+    skip_region_validation      = true
+    skip_credentials_validation = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_s3_checksum            = true
   }
 }

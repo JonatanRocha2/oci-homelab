@@ -20,9 +20,7 @@ if git grep -I -n -E 'BEGIN (OPENSSH |RSA |EC |PRIVATE )?PRIVATE KEY' -- . ':(ex
   fail "ha material de chave privada versionado"
 fi
 
-if grep -R -n -E 'tofu apply|terraform apply|tofu destroy|terraform destroy' .github/workflows; then
-  fail "o workflow nao pode aplicar nem destruir"
-fi
+python3 "${root}/scripts/pipeline_checks.py" workflows --root "${root}"
 
 if grep -R -n -E 'resource "oci_core_nat_gateway"|resource "oci_core_public_ip"|resource "oci_load_balancer"|resource "oci_network_load_balancer"|resource "oci_core_volume"|resource "oci_core_volume_backup"' infra --include='*.tf'; then
   fail "ha NAT, IP reservado, balanceador, volume extra ou backup"

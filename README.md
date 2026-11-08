@@ -143,40 +143,38 @@ Allow group <grupo> to inspect compartments in tenancy
 
 A consulta de availability domain e a listagem de imagens de plataforma usam o mesmo compartment. A listagem de imagens de plataforma aceita o OCID do compartment em que voce tem `read instance-images`.
 
-## Estado local
+## Estado
 
-O backend e local, em `infra/terraform.tfstate`. Esse arquivo, o backup automatico e qualquer `*.tfplan` estao no `.gitignore`. O estado guarda OCID e o IP publico. Perder o arquivo faz o proximo plano querer criar tudo de novo.
+O backend configurado no codigo e S3 compativel, com `use_lockfile`, trava nativa do OpenTofu e sem tabela extra. O bucket, a regiao e o endpoint nao entram no Git. Eles ficam em `infra/backend.hcl`, copiado de `infra/backend.hcl.example`, ou no segredo `HOMELAB_BACKEND_CONFIG`. O arquivo de exemplo usa `SUBSTITUA` de proposito.
 
-Antes do primeiro apply, e de novo antes de cada apply posterior, copie o estado para fora do repositorio, em um disco seu e cifrado, se ele ja existir:
+O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para.
 
-```bash
-cp -a infra/terraform.tfstate \
-  "$HOME/backups-oci-homelab/terraform.tfstate.$(date +%Y%m%d%H%M%S)"
-```
+Este codigo nao cria bucket, chave nem policy. A pagina publica de Always Free lista 20 GB de Object Storage e 50.000 requisicoes por mes; isso nao foi tratado como autorizacao para criar o bucket, nem como garantia de preco na sua tenancy. O bucket, se voce o criar, precisa ser privado, sem acesso publico e sem pre-authenticated request para o objeto de estado.
 
-Nao ha backend remoto. Nao suba o estado para o Git nem para um artifact da CI.
+Nao suba estado, plano ou chave para o Git. O artifact do plano e cifrado. Artifact de repositorio publico pode ser lido por qualquer pessoa; por isso o arquivo publicado e so `homelab-plan.enc`.
 
-## Plano manual e apply separado
+## Plano e apply
 
-Nao ha alvo de apply. A CI nao planeja na nuvem e nao aplica. Quando for a hora, no seu computador, com o `~/.oci/config` ja criado por voce:
+O caminho suportado e `.github/workflows/homelab.yml`, disparado a mao em `main`. Push e pull request nao planejam e nao aplicam. Nao ha workflow de destroy.
+
+`operation=plan` usa o ambiente `homelab-plan`, troca um JWT efemero do GitHub por um RPST e grava o plano cifrado. O resumo publicado lista shape, tamanho e contagem de regras. Nao lista OCID, chave nem o CIDR de origem do SSH. O workflow nao define `public_ipv4_pricing_acknowledged`. Esse valor so pode vir do `HOMELAB_TFVARS` que voce gravar, e continua sendo o reconhecimento de que o preco do IPv4 efemero nao ficou provado. Nao e garantia de custo zero.
+
+`operation=apply` usa o ambiente `homelab-apply`. O nome do ambiente, sozinho, nao segura o job. O script exige um registro `approved` desse ambiente, feito por outra pessoa, e falha se a lista vier vazia. Tambem exige que a execucao do plano tenha sido `workflow_dispatch` em `main`, com o mesmo SHA, e aplica apenas o arquivo daquele plano. Plano com delete, replace ou recurso fora da lista fechada nao segue.
+
+A autenticacao do workflow e `OCI_AUTH=ResourcePrincipal`. A chave de API que ja existe na sua maquina nao entra no GitHub. O customer secret key do bucket tambem nao e essa chave de API.
+
+No seu computador, o plano local ainda usa a chave de API do `~/.oci/config`. Ele precisa do mesmo backend, senao aponta para outro estado:
 
 ```bash
 cd infra
 cp terraform.tfvars.example terraform.tfvars
-# edite terraform.tfvars; o arquivo e ignorado pelo Git
-tofu init
+cp backend.hcl.example backend.hcl
+# edite os dois; os arquivos reais sao ignorados pelo Git
+tofu init -backend-config=backend.hcl
 tofu plan -out=homelab.tfplan
 ```
 
-Leia o plano inteiro. Ele deve mostrar uma VCN, um internet gateway, uma route table, duas security lists (a da subnet e a padrao esvaziada), uma subnet e uma instancia. Confira 2 OCPUs, 12 GB, boot de 50 GB, 10 VPU/GB, um IPv4 efemero, a imagem Ubuntu 24.04 aarch64 e a origem de SSH. Nao deve aparecer NAT, balanceador, IP reservado, volume solto nem backup.
-
-So num segundo comando, depois dessa leitura, e se voce decidir criar os recursos:
-
-```bash
-tofu apply homelab.tfplan
-```
-
-`homelab.tfplan` tambem fica de fora do Git. Apagar a instancia nao esta automatizado. Se um dia for preciso liberar cota, esse destroy e uma decisao a parte, com backup do estado feito antes.
+Um apply local nao passa pela aprovacao nem pela conferencia do plano salvo. Nao use o apply local contra este estado.
 
 ## Ansible
 
@@ -219,9 +217,25 @@ ssh -L 6443:127.0.0.1:6443 ubuntu@IP_PUBLICO
 
 Se precisar do arquivo na sua maquina, copie por esse SSH, troque o endereco do servidor e guarde fora do repositorio com modo `0600`. Nao faca commit.
 
+## O que este codigo deixa pronto
+
+O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. Isso e codigo pronto. Nao e operacao pronta. Nenhum secret foi gravado no GitHub, nenhum ambiente foi criado e nenhum recurso da OCI foi pedido por este fluxo.
+
+Para o dispatch funcionar, falta a configuracao que so voce pode fazer:
+
+1. Confirmar se o Object Storage cabe na sua conta e, se couber, criar um bucket privado. O codigo nao o cria.
+2. Criar um customer secret key so para esse bucket. Nao envie a chave de API que ja assina a CLI.
+3. Criar a aplicacao confidencial do identity domain e a Identity Propagation Trust. O issuer e `https://token.actions.githubusercontent.com`, o `impersonatingResource` e `githubactions`, e a audiencia pedida pelo workflow e `oci-homelab`. As validacoes de claim sao todas obrigatorias ao mesmo tempo; as cinco que fecham este repositorio sao `repository=JonatanRocha2/oci-homelab`, `ref=refs/heads/main`, `ref_type=branch`, `aud=oci-homelab` e `job_workflow_ref=JonatanRocha2/oci-homelab/.github/workflows/homelab.yml@refs/heads/main`.
+4. Escrever a policy de IAM do resource principal no compartment que voce ja usa. O repositorio nao cria policy.
+5. Criar os ambientes `homelab-plan` e `homelab-apply`. Em `homelab-apply`, marcar required reviewers e impedir autoaprovacao. Sem esse reviewer, o GitHub nao espera ninguem; o script entao falha porque a lista de aprovacao vem vazia.
+6. Gravar os mesmos nomes de segredo nos dois ambientes: `OCI_IDENTITY_DOMAIN_URL`, `OCI_OAUTH_CLIENT_ID`, `OCI_OAUTH_CLIENT_SECRET`, `OCI_CUSTOMER_SECRET_KEY_ID`, `OCI_CUSTOMER_SECRET_KEY`, `HOMELAB_BACKEND_CONFIG`, `HOMELAB_TFVARS` e `HOMELAB_PLAN_PASSPHRASE`. `HOMELAB_TFVARS` e o unico lugar das confirmacoes de cota e de preco. `HOMELAB_PLAN_PASSPHRASE` cifra o plano. O backend nao leva a chave de acesso dentro do texto.
+7. Proteger `main`. O `workflow_dispatch` executa o YAML que estiver em `main`, mesmo quando o apply faz checkout do SHA antigo. Sem essa protecao, uma gravacao direta em `main` pode trocar o workflow.
+
+Pull request, inclusive de fork, continua so em `validate.yml`: `contents: read`, sem segredo, sem `id-token` e sem ambiente.
+
 ## CI
 
-`.github/workflows/validate.yml` so tem `contents: read`. Instala o OpenTofu 1.13.9 conferindo o SHA-256, instala Ansible pelos pins de `requirements-ci.txt` e roda `scripts/ci.sh`. Isso faz `tofu fmt -check`, `tofu init -backend=false`, `tofu validate`, `tofu test` e o lint do Ansible. Nao ha segredo, plano, estado nem apply.
+`.github/workflows/validate.yml` so tem `contents: read`. Instala o OpenTofu 1.13.9 conferindo o SHA-256, instala Ansible pelos pins de `requirements-ci.txt` e roda `scripts/ci.sh`. Isso faz a conferencia do repositorio, os testes do gate de aprovacao, `tofu fmt -check`, `tofu init -backend=false`, `tofu validate`, `tofu test` e o lint do Ansible. Nao ha segredo, plano remoto nem apply nesse workflow.
 
 O provider `oracle/oci` 9.12.1 esta em `infra/.terraform.lock.hcl`, com hashes para Linux e macOS em amd64 e arm64.
 
@@ -232,10 +246,10 @@ Com a maquina sem `~/.oci/config` e sem variavel de credencial OCI:
 - `tofu fmt -check`
 - `tofu init -backend=false`
 - `tofu validate`
-- `tofu test`: 31 cenarios com o provider simulado, sem API da OCI
+- `tofu test`: 42 cenarios com o provider simulado, sem API da OCI
 - `ansible-lint` no perfil moderate, que passou no perfil production
 - `ansible-playbook --syntax-check` no inventario de exemplo
-- `scripts/check-repository.sh`, que recusa estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra e apply no workflow
+- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`, que recusam estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra, destroy, apply fora do plano salvo, aprovacao vazia e estado remoto vazio
 
 Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU, a escolha da imagem aarch64 mais nova, a recusa de Minimal e amd64, a recusa de um availability domain que a consulta nao devolveu, e as recusas de CIDR, shape, memoria, disco, VPU, home region, confirmacoes e chave privada.
 
@@ -247,3 +261,4 @@ Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU
 - SSH, apt, reload do sshd e instalacao do k3s numa VM
 - se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na sua fatura
 - a policy IAM, porque ela nao deve ser criada por este codigo
+- `workflow_dispatch`, a troca do JWT por RPST, o bucket e os ambientes do GitHub; a aprovacao foi exercitada com fixtures, nao com um ambiente real

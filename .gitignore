@@ -1,4 +1,6 @@
 # OpenTofu state, plans, and local overrides. Never commit these.
+infra/backend.hcl
+homelab-plan.enc
 *.tfstate
 *.tfstate.*
 *.tfplan
