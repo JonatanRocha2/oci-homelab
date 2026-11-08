@@ -12,13 +12,15 @@ locals {
     if strcontains(lower(image.display_name), "aarch64") && !strcontains(lower(image.display_name), "minimal")
   ] : []
 
+  # O provider devolve time_created como "2026-10-30 19:53:14.707 +0000 UTC".
+  # Separar por espaco pegaria a hora, nao o OCID. O caractere "|" nao aparece nos dois campos.
   looked_up_newest_first = var.image_id == null ? reverse(sort([
-    for image in local.looked_up_images : "${image.time_created} ${image.id}"
+    for image in local.looked_up_images : "${image.time_created}|${image.id}"
   ])) : []
 
   selected_image_id = (
     var.image_id != null ? var.image_id : (
-      length(local.looked_up_newest_first) > 0 ? split(" ", local.looked_up_newest_first[0])[1] : null
+      length(local.looked_up_newest_first) > 0 ? split("|", local.looked_up_newest_first[0])[1] : null
     )
   )
 
