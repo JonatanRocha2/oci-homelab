@@ -1,0 +1,12 @@
+write-kubeconfig: /etc/rancher/k3s/k3s.yaml
+write-kubeconfig-mode: "0600"
+disable:
+  - traefik
+  - servicelb
+node-ip: "{{ ansible_default_ipv4.address }}"
+advertise-address: "{{ ansible_default_ipv4.address }}"
+tls-san:
+  - "{{ ansible_default_ipv4.address }}"
+  - "127.0.0.1"
+flannel-iface: "{{ ansible_default_ipv4.interface }}"
+protect-kernel-defaults: false

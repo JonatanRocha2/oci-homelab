@@ -1,0 +1,43 @@
+# Copie para terraform.tfvars, que o Git ignora, e substitua os
+# marcadores. O CIDR 203.0.113.10/32 e as chaves abaixo nao passam na
+# validacao: o CIDR e rede de documentacao e os marcadores nao sao
+# chaves publicas.
+
+compartment_ocid = "ocid1.compartment.oc1..SUBSTITUA"
+
+region      = "sa-saopaulo-1"
+home_region = "sa-saopaulo-1"
+
+# true somente depois de ler a home region na console.
+home_region_confirmed = false
+
+# true somente depois de ver o saldo em Limits, Quotas and Usage.
+# Isso ainda nao confirma capacidade de host.
+manual_limits_checked = false
+
+# true somente depois de reler o preco do IPv4 efemero e da saida.
+public_ipv4_pricing_acknowledged = false
+
+availability_domain              = "SUBSTITUA:SA-SAOPAULO-1-AD-1"
+oci_config_profile               = "DEFAULT"
+name                             = "homelab"
+instance_shape                   = "VM.Standard.A1.Flex"
+ocpus                            = 2
+memory_gb                        = 12
+boot_volume_gb                   = 50
+boot_volume_vpus_per_gb          = 10
+assign_ephemeral_public_ipv4     = true
+admin_cidr                       = "203.0.113.10/32"
+ssh_public_key                   = "ssh-ed25519 REPLACE_WITH_OWNER_PUBLIC_KEY"
+
+# Cada item e outra chave publica e sai sozinho. A lista nao abre rede.
+# O SSH continua aceitando somente admin_cidr.
+additional_ssh_public_keys = [
+  {
+    label      = "automation"
+    public_key = "ssh-ed25519 REPLACE_WITH_AUTOMATION_PUBLIC_KEY"
+  }
+]
+
+# Deixe null para a consulta Canonical Ubuntu 24.04 aarch64.
+image_id = null

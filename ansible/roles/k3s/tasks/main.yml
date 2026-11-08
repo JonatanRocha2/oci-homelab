@@ -1,0 +1,97 @@
+---
+- name: Recusar instalacao implicita do k3s
+  ansible.builtin.assert:
+    that:
+      - k3s_enabled | bool
+    fail_msg: "k3s permanece desligado. Defina k3s_enabled=true de forma explicita para instalar."
+
+- name: Exigir a arquitetura ARM64 do binario fixado
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['aarch64', 'arm64']
+    fail_msg: "O binario fixado e k3s-arm64. Esta maquina nao e ARM64."
+
+- name: Exigir o IPv4 privado da VNIC
+  ansible.builtin.assert:
+    that:
+      - ansible_default_ipv4.address is defined
+      - ansible_default_ipv4.interface is defined
+      - not ansible_default_ipv4.address.startswith('127.')
+    fail_msg: "Nao ha IPv4 de VNIC para anunciar o k3s. O IP publico da OCI nao deve ser usado aqui."
+
+- name: Criar o diretorio de configuracao do k3s
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Gravar a configuracao local do k3s
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart k3s
+
+- name: Baixar o binario k3s-arm64 com checksum fixado
+  ansible.builtin.get_url:
+    url: "{{ k3s_binary_url }}"
+    dest: /usr/local/bin/k3s
+    checksum: "sha256:{{ k3s_sha256_arm64 }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Baixar o instalador do k3s com checksum fixado
+  ansible.builtin.get_url:
+    url: "{{ k3s_install_url }}"
+    dest: /usr/local/src/homelab-k3s-install.sh
+    checksum: "sha256:{{ k3s_install_sha256 }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ler a versao do k3s ja instalada
+  ansible.builtin.command: /usr/local/bin/k3s --version
+  register: k3s_installed
+  changed_when: false
+  failed_when: false
+
+- name: Verificar se o servico k3s esta ativo
+  ansible.builtin.systemd:
+    name: k3s
+  register: k3s_service
+  failed_when: false
+  changed_when: false
+
+- name: Instalar o servico k3s com o binario ja verificado
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - /usr/local/src/homelab-k3s-install.sh
+  environment:
+    INSTALL_K3S_SKIP_DOWNLOAD: "true"
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: server
+  register: k3s_installer
+  changed_when: k3s_installer.rc == 0
+  when: >-
+    k3s_version not in k3s_installed.stdout | default('') or
+    k3s_service.status is not defined or
+    k3s_service.status.ActiveState | default('') != 'active'
+
+- name: Restringir o kubeconfig ao root
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/k3s.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Confirmar que o kubeconfig nao sai do servidor
+  ansible.builtin.assert:
+    that:
+      - k3s_fetch_kubeconfig | default(false) | bool == false
+    fail_msg: "O kubeconfig nao e copiado para a maquina de controle nem para o repositorio."
