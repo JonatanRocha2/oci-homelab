@@ -103,6 +103,23 @@ def _lineage(value):
     return True
 
 
+def _snapshot(state):
+    resources = _resources(state)
+    if resources is None or type(state.get("serial")) is not int:
+        return None
+    lineage = state.get("lineage")
+    if lineage is None:
+        lineage = ""
+    if not isinstance(lineage, str):
+        return None
+    serial = state["serial"]
+    if _lineage(lineage):
+        return lineage, serial
+    if lineage == "" and serial == 0 and resources == []:
+        return "", 0
+    return None
+
+
 def check_changes(changes):
     if not isinstance(changes, list):
         return "plano sem resource_changes"
@@ -132,8 +149,10 @@ def write_metadata(plan, state, sha):
     resources = _resources(state)
     if resources is None:
         return None, "estado remoto ausente ou invalido"
-    if not _lineage(state.get("lineage")) or type(state.get("serial")) is not int:
+    snapshot = _snapshot(state)
+    if snapshot is None:
         return None, "lineage ou serial ausente"
+    lineage, serial = snapshot
     addresses = []
     for change in plan.get("resource_changes") or []:
         addresses.append(change["address"])
@@ -144,8 +163,8 @@ def write_metadata(plan, state, sha):
         "workflow": WORKFLOW,
         "has_delete": False,
         "empty_state": len(resources) == 0,
-        "state_lineage": state["lineage"],
-        "state_serial": state["serial"],
+        "state_lineage": lineage,
+        "state_serial": serial,
         "resource_addresses": addresses,
     }
     return metadata, None
@@ -167,7 +186,10 @@ def verify_binding(metadata, plan_bytes, sha):
             return "o plano nao esta amarrado a este commit"
     if metadata.get("plan_sha256") != digest or not HEX64_RE.fullmatch(digest):
         return "o arquivo do plano nao confere com o hash aprovado"
-    if not _lineage(metadata.get("state_lineage")) or type(metadata.get("state_serial")) is not int:
+    lineage = metadata.get("state_lineage")
+    serial = metadata.get("state_serial")
+    first = lineage == "" and serial == 0 and metadata.get("empty_state") is True
+    if not ((_lineage(lineage) and type(serial) is int) or first):
         return "metadata sem lineage"
     if type(metadata.get("empty_state")) is not bool:
         return "metadata sem empty_state"
@@ -180,9 +202,12 @@ def guard_apply_state(state, metadata, allow_empty):
         return error
     if metadata.get("empty_state") is not allow_empty:
         return "acknowledge_empty_state nao confere com o plano salvo"
-    if state.get("lineage") != metadata.get("state_lineage"):
+    snapshot = _snapshot(state)
+    if snapshot is None:
+        return "lineage ou serial ausente"
+    if snapshot[0] != metadata.get("state_lineage"):
         return "a lineage do estado mudou depois do plano"
-    if state.get("serial") != metadata.get("state_serial"):
+    if snapshot[1] != metadata.get("state_serial"):
         return "o serial do estado mudou depois do plano"
     return None
 
@@ -497,6 +522,20 @@ def selftest():
     check_fail("run push", verify_run(pushed, "c" * 40))
     check("apply state", guard_apply_state(empty, metadata, True))
     check_fail("serial", guard_apply_state(dict(empty, serial=1), metadata, True))
+    first = {"lineage": "", "serial": 0, "resources": []}
+    first_meta, error = write_metadata(plan, first, "a" * 40)
+    check("primeiro estado", error)
+    if first_meta is None or first_meta.get("state_lineage") != "" or first_meta.get("state_serial") != 0 or first_meta.get("empty_state") is not True:
+        failures.append("primeiro estado nao ficou vazio")
+    else:
+        first_meta["plan_sha256"] = hashlib.sha256(blob).hexdigest()
+        check("binding primeiro", verify_binding(first_meta, blob, "a" * 40))
+        check("apply primeiro", guard_apply_state(first, first_meta, True))
+        check("apply primeiro sem chave", guard_apply_state({"serial": 0, "resources": []}, first_meta, True))
+    _, error = write_metadata(plan, {"lineage": "", "serial": 0, "resources": [{"type": "oci_core_vcn"}]}, "a" * 40)
+    check_fail("lineage vazia com recurso", error)
+    _, error = write_metadata(plan, {"lineage": "", "serial": 1, "resources": []}, "a" * 40)
+    check_fail("lineage vazia com serial", error)
 
     root = pathlib.Path(__file__).resolve().parents[1]
     for error in workflow_errors(root):
