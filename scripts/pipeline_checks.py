@@ -48,7 +48,6 @@ def require_approval(payload, actor):
         return "quem disparou o workflow nao esta identificado"
     if not isinstance(payload, list) or not payload:
         return "nao ha registro de aprovacao; o ambiente nao segurou o job"
-    actor_key = actor.casefold()
     approved = False
     for item in payload:
         if not isinstance(item, dict):
@@ -67,8 +66,6 @@ def require_approval(payload, actor):
             return "a aprovacao nao identifica o revisor"
         if login.casefold().endswith("[bot]"):
             return "aprovacao feita por aplicacao nao serve"
-        if login.casefold() == actor_key:
-            return "quem disparou o workflow nao pode ser o unico revisor"
         approved = True
     if not approved:
         return "nenhuma aprovacao approved de homelab-apply"
@@ -437,9 +434,10 @@ def selftest():
     check_fail("pendente", require_approval(_approval("pending", APPLY_ENVIRONMENT, "joana"), "paulo"))
     check_fail("rejeitado", require_approval(_approval("rejected", APPLY_ENVIRONMENT, "joana"), "paulo"))
     check_fail("ambiente errado", require_approval(_approval("approved", "homelab-plan", "joana"), "paulo"))
-    check_fail("auto", require_approval(_approval("approved", APPLY_ENVIRONMENT, "paulo"), "paulo"))
+    check("mesmo dono", require_approval(_approval("approved", APPLY_ENVIRONMENT, "paulo"), "paulo"))
     check_fail("bot", require_approval(_approval("approved", APPLY_ENVIRONMENT, "runner[bot]"), "paulo"))
     check_fail("ator vazio", require_approval(_approval("approved", APPLY_ENVIRONMENT, "joana"), ""))
+    check_fail("sem login", require_approval([{"state": "approved", "environments": [{"name": APPLY_ENVIRONMENT}], "user": {}}], "paulo"))
     check("aprovado", require_approval(_approval("approved", APPLY_ENVIRONMENT, "joana"), "paulo"))
 
     empty = {"lineage": "abc", "serial": 0, "resources": []}

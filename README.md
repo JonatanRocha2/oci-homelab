@@ -159,7 +159,7 @@ O caminho suportado e `.github/workflows/homelab.yml`, disparado a mao em `main`
 
 `operation=plan` usa o ambiente `homelab-plan`, troca um JWT efemero do GitHub por um RPST e grava o plano cifrado. O resumo publicado lista shape, tamanho e contagem de regras. Nao lista OCID, chave nem o CIDR de origem do SSH. O workflow nao define `public_ipv4_pricing_acknowledged`. Esse valor so pode vir do `HOMELAB_TFVARS` que voce gravar, e continua sendo o reconhecimento de que o preco do IPv4 efemero nao ficou provado. Nao e garantia de custo zero.
 
-`operation=apply` usa o ambiente `homelab-apply`. O nome do ambiente, sozinho, nao segura o job. O script exige um registro `approved` desse ambiente, feito por outra pessoa, e falha se a lista vier vazia. Tambem exige que a execucao do plano tenha sido `workflow_dispatch` em `main`, com o mesmo SHA, e aplica apenas o arquivo daquele plano. Plano com delete, replace ou recurso fora da lista fechada nao segue.
+`operation=apply` usa o ambiente `homelab-apply`. O disparo nao conta como aprovacao. O script so continua quando a API de approvals tem um registro `approved` desse ambiente e o login de quem aprovou. Esse login pode ser o de quem disparou o workflow. Lista vazia, pendente, rejeitada ou sem login falha. O plano aplicado e o arquivo cifrado da execucao informada: o SHA, o hash e a lineage e o serial do estado precisam conferir. Plano com delete, replace ou recurso fora da lista fechada nao segue.
 
 A autenticacao do workflow e `OCI_AUTH=ResourcePrincipal`. A chave de API que ja existe na sua maquina nao entra no GitHub. O customer secret key do bucket tambem nao e essa chave de API.
 
@@ -221,15 +221,22 @@ Se precisar do arquivo na sua maquina, copie por esse SSH, troque o endereco do 
 
 O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. Isso e codigo pronto. Nao e operacao pronta. Nenhum secret foi gravado no GitHub, nenhum ambiente foi criado e nenhum recurso da OCI foi pedido por este fluxo.
 
-Para o dispatch funcionar, falta a configuracao que so voce pode fazer:
+Para operar, ainda falta esta configuracao fora do repositorio:
 
-1. Confirmar se o Object Storage cabe na sua conta e, se couber, criar um bucket privado. O codigo nao o cria.
-2. Criar um customer secret key so para esse bucket. Nao envie a chave de API que ja assina a CLI.
-3. Criar a aplicacao confidencial do identity domain e a Identity Propagation Trust. O issuer e `https://token.actions.githubusercontent.com`, o `impersonatingResource` e `githubactions`, e a audiencia pedida pelo workflow e `oci-homelab`. As validacoes de claim sao todas obrigatorias ao mesmo tempo; as cinco que fecham este repositorio sao `repository=JonatanRocha2/oci-homelab`, `ref=refs/heads/main`, `ref_type=branch`, `aud=oci-homelab` e `job_workflow_ref=JonatanRocha2/oci-homelab/.github/workflows/homelab.yml@refs/heads/main`.
-4. Escrever a policy de IAM do resource principal no compartment que voce ja usa. O repositorio nao cria policy.
-5. Criar os ambientes `homelab-plan` e `homelab-apply`. Em `homelab-apply`, marcar required reviewers e impedir autoaprovacao. Sem esse reviewer, o GitHub nao espera ninguem; o script entao falha porque a lista de aprovacao vem vazia.
-6. Gravar os mesmos nomes de segredo nos dois ambientes: `OCI_IDENTITY_DOMAIN_URL`, `OCI_OAUTH_CLIENT_ID`, `OCI_OAUTH_CLIENT_SECRET`, `OCI_CUSTOMER_SECRET_KEY_ID`, `OCI_CUSTOMER_SECRET_KEY`, `HOMELAB_BACKEND_CONFIG`, `HOMELAB_TFVARS` e `HOMELAB_PLAN_PASSPHRASE`. `HOMELAB_TFVARS` e o unico lugar das confirmacoes de cota e de preco. `HOMELAB_PLAN_PASSPHRASE` cifra o plano. O backend nao leva a chave de acesso dentro do texto.
-7. Proteger `main`. O `workflow_dispatch` executa o YAML que estiver em `main`, mesmo quando o apply faz checkout do SHA antigo. Sem essa protecao, uma gravacao direta em `main` pode trocar o workflow.
+1. Bucket privado e um customer secret key so desse bucket. A pagina publica de Always Free lista 20 GB e 50.000 requisicoes por mes; isso nao e preco garantido nesta tenancy. O codigo nao cria o bucket. Nao envie a chave de API da CLI.
+2. Aplicacao confidencial no identity domain, a Identity Propagation Trust e a policy do resource principal. O codigo nao cria nada disso, e a troca de token nao foi executada.
+3. Ambientes `homelab-plan` e `homelab-apply`. Em `homelab-apply`, o required reviewer pode ser o proprio dono. A opcao Prevent self-review fica desligada: o GitHub, por padrao, deixa quem disparou o job aprovar se essa pessoa e reviewer. O disparo continua sem ser a aprovacao; o job espera o clique Approve and deploy. Sem reviewer configurado o GitHub nao espera, e o script falha porque a lista vem vazia.
+4. Os segredos abaixo, com o mesmo nome nos dois ambientes.
+5. Protecao de `main`. O dispatch executa o YAML que estiver em `main`, mesmo quando o apply faz checkout do SHA do plano.
+
+Sobre a federacao, a documentacao atual e o que este repositorio ainda nao provou:
+
+- O issuer do JWT do GitHub e `https://token.actions.githubusercontent.com`. Na OCI o campo `issuer` e a string gravada na trust; o exemplo oficial deixa o valor em aberto e cita GitHub Actions como carga externa. Nao houve troca de token nesta tenancy.
+- `githubactions` e o exemplo oficial da OCI para `impersonatingResource` e para `res_type`. Este workflow envia `res_type=githubactions`. A trust precisa repetir essa string. Ela nao foi criada aqui.
+- `oci-homelab` nao e campo da OCI. E a audiencia pedida por este workflow ao GitHub. O `aud` padrao do GitHub e a URL do dono do repositorio; audiencia customizada esta na documentacao do GitHub. A OCI so compara isso se uma claim validation usar o nome `aud` e o valor exato do JWT. Esse casamento nao foi testado.
+- A OCI aceita ate cinco claim validations, todas obrigatorias, com nome e valor exatos. O exemplo oficial usa `ref_type` e `job_workflow_ref`. No GitHub, `job_workflow_ref` esta documentado para reusable workflow, e este workflow nao e reusable. A claim documentada para este arquivo e `workflow_ref`, com o valor `JonatanRocha2/oci-homelab/.github/workflows/homelab.yml@refs/heads/main`. `repository`, `ref` e `ref_type=branch` tambem sao claims documentadas. Nenhuma foi gravada numa trust.
+
+Segredos dos dois ambientes: `OCI_IDENTITY_DOMAIN_URL`, `OCI_OAUTH_CLIENT_ID`, `OCI_OAUTH_CLIENT_SECRET`, `OCI_CUSTOMER_SECRET_KEY_ID`, `OCI_CUSTOMER_SECRET_KEY`, `HOMELAB_BACKEND_CONFIG`, `HOMELAB_TFVARS` e `HOMELAB_PLAN_PASSPHRASE`. `HOMELAB_BACKEND_CONFIG` leva bucket e endpoint, no formato de `infra/backend.hcl.example`, sem a chave de acesso. `HOMELAB_TFVARS` e o unico lugar das confirmacoes de cota e de preco. `HOMELAB_PLAN_PASSPHRASE` cifra o plano.
 
 Pull request, inclusive de fork, continua so em `validate.yml`: `contents: read`, sem segredo, sem `id-token` e sem ambiente.
 
@@ -249,7 +256,7 @@ Com a maquina sem `~/.oci/config` e sem variavel de credencial OCI:
 - `tofu test`: 42 cenarios com o provider simulado, sem API da OCI
 - `ansible-lint` no perfil moderate, que passou no perfil production
 - `ansible-playbook --syntax-check` no inventario de exemplo
-- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`, que recusam estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra, destroy, apply fora do plano salvo, aprovacao vazia e estado remoto vazio
+- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`, que recusam estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra, destroy, apply fora do plano salvo, aprovacao vazia e estado remoto vazio. A aprovacao do mesmo login que disparou o workflow passa; lista vazia, pendente e sem login falham
 
 Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU, a escolha da imagem aarch64 mais nova, a recusa de Minimal e amd64, a recusa de um availability domain que a consulta nao devolveu, e as recusas de CIDR, shape, memoria, disco, VPU, home region, confirmacoes e chave privada.
 
