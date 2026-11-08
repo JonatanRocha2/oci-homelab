@@ -11,6 +11,10 @@ terraform {
   # O bucket, a regiao e o endpoint ficam fora do repositorio, em
   # -backend-config. Sem isso o init do plano remoto para. Nao ha
   # fallback para estado local vazio.
+  # use_lockfile pede o write condicional If-None-Match do backend S3.
+  # A pagina de compatibilidade S3 da OCI lista PutObject e nao lista
+  # esse header. A compatibilidade nao foi testada. O flag fica para o
+  # OpenTofu parar se o write condicional falhar, nao como trava provada.
   backend "s3" {
     key                         = "oci-homelab/terraform.tfstate"
     use_lockfile                = true

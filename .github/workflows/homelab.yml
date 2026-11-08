@@ -45,7 +45,6 @@ jobs:
     environment: homelab-plan
     permissions:
       contents: read
-      id-token: write
       actions: write
     steps:
       - name: Checkout
@@ -60,16 +59,15 @@ jobs:
       - name: Plan
         shell: bash
         env:
-          OCI_IDENTITY_DOMAIN_URL: ${{ secrets.OCI_IDENTITY_DOMAIN_URL }}
-          OCI_OAUTH_CLIENT_ID: ${{ secrets.OCI_OAUTH_CLIENT_ID }}
-          OCI_OAUTH_CLIENT_SECRET: ${{ secrets.OCI_OAUTH_CLIENT_SECRET }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
           OCI_CUSTOMER_SECRET_KEY_ID: ${{ secrets.OCI_CUSTOMER_SECRET_KEY_ID }}
           OCI_CUSTOMER_SECRET_KEY: ${{ secrets.OCI_CUSTOMER_SECRET_KEY }}
           HOMELAB_BACKEND_CONFIG: ${{ secrets.HOMELAB_BACKEND_CONFIG }}
           HOMELAB_TFVARS: ${{ secrets.HOMELAB_TFVARS }}
           HOMELAB_PLAN_PASSPHRASE: ${{ secrets.HOMELAB_PLAN_PASSPHRASE }}
-          OCI_GITHUB_OIDC_AUDIENCE: oci-homelab
-          OCI_RPST_RESOURCE_TYPE: githubactions
           OCI_REGION: sa-saopaulo-1
           ALLOW_EMPTY_STATE: ${{ inputs.acknowledge_empty_state }}
         run: bash scripts/ci-plan.sh
@@ -96,7 +94,6 @@ jobs:
     environment: homelab-apply
     permissions:
       contents: read
-      id-token: write
       actions: read
     steps:
       - name: Check apply inputs
@@ -144,15 +141,14 @@ jobs:
       - name: Apply saved plan
         shell: bash
         env:
-          OCI_IDENTITY_DOMAIN_URL: ${{ secrets.OCI_IDENTITY_DOMAIN_URL }}
-          OCI_OAUTH_CLIENT_ID: ${{ secrets.OCI_OAUTH_CLIENT_ID }}
-          OCI_OAUTH_CLIENT_SECRET: ${{ secrets.OCI_OAUTH_CLIENT_SECRET }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
           OCI_CUSTOMER_SECRET_KEY_ID: ${{ secrets.OCI_CUSTOMER_SECRET_KEY_ID }}
           OCI_CUSTOMER_SECRET_KEY: ${{ secrets.OCI_CUSTOMER_SECRET_KEY }}
           HOMELAB_BACKEND_CONFIG: ${{ secrets.HOMELAB_BACKEND_CONFIG }}
           HOMELAB_PLAN_PASSPHRASE: ${{ secrets.HOMELAB_PLAN_PASSPHRASE }}
-          OCI_GITHUB_OIDC_AUDIENCE: oci-homelab
-          OCI_RPST_RESOURCE_TYPE: githubactions
           OCI_REGION: sa-saopaulo-1
           ALLOW_EMPTY_STATE: ${{ inputs.acknowledge_empty_state }}
           GIT_SHA: ${{ inputs.git_sha }}

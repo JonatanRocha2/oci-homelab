@@ -137,6 +137,8 @@ Allow group <grupo> to manage volume-family in compartment <compartment>
 Allow group <grupo> to manage virtual-network-family in compartment <compartment>
 Allow group <grupo> to read instance-images in compartment <compartment>
 Allow group <grupo> to inspect compartments in tenancy
+Allow group <grupo> to manage buckets in compartment <compartment> where target.bucket.name='<bucket>'
+Allow group <grupo> to manage objects in compartment <compartment> where target.bucket.name='<bucket>'
 ```
 
 `manage virtual-network-family` cobre VCN, subnet, internet gateway, route table e security list. E amplo dentro de um compartment e nao deve ser aplicado na tenancy inteira se der para evitar. Este repositorio nao cria grupo, usuario, policy nem chave.
@@ -149,7 +151,11 @@ O backend configurado no codigo e S3 compativel, com `use_lockfile`, trava nativ
 
 O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para.
 
-Este codigo nao cria bucket, chave nem policy. A pagina publica de Always Free lista 20 GB de Object Storage e 50.000 requisicoes por mes; isso nao foi tratado como autorizacao para criar o bucket, nem como garantia de preco na sua tenancy. O bucket, se voce o criar, precisa ser privado, sem acesso publico e sem pre-authenticated request para o objeto de estado.
+`use_lockfile` fica ligado. O OpenTofu documenta essa trava como write condicional `If-None-Match` no backend S3. A pagina de compatibilidade S3 da OCI lista `PutObject` e nao lista esse header. A API nativa de Object Storage documenta `If-None-Match`, e isso nao prova o mesmo comportamento no endpoint S3. Esse mecanismo nao foi testado contra a API S3 da OCI. Se o write condicional for recusado, o OpenTofu para; isso nao equivale a uma trava comprovada. A concorrencia do GitHub so enfileira execucoes deste workflow. Ela nao impede um apply local ao mesmo tempo, por isso a trava do backend nao foi trocada por essa concorrencia.
+
+O OpenTofu 1.13 deste repositorio nao tem backend de Object Storage da OCI. A lista oficial diz que so os backends embutidos existem, e o binario nao registra `backend "oci"`. O "OCI" do OpenTofu 1.10 e registro de container, nao estado da Oracle. O backend usado e o S3 compativel, com bucket e endpoint fora do Git.
+
+Este codigo nao cria bucket, chave nem policy. Uma leitura somente da conta nao encontrou bucket nem Customer Secret Key. A pagina Always Free, depois do trial, lista 20 GB combinados e 50.000 requisicoes por mes. Na mesma pagina, conta paga ou trial com credito lista 10 GB standard, 10 GB infrequent e 10 GB archive, com as mesmas 50.000 requisicoes. Nenhum uso foi medido alem da lista vazia. O bucket, se for criado, e privado, sem acesso publico e sem pre-authenticated request. O namespace da conta nao entra no repositorio.
 
 Nao suba estado, plano ou chave para o Git. O artifact do plano e cifrado. Artifact de repositorio publico pode ser lido por qualquer pessoa; por isso o arquivo publicado e so `homelab-plan.enc`.
 
@@ -157,11 +163,11 @@ Nao suba estado, plano ou chave para o Git. O artifact do plano e cifrado. Artif
 
 O caminho suportado e `.github/workflows/homelab.yml`, disparado a mao em `main`. Push e pull request nao planejam e nao aplicam. Nao ha workflow de destroy.
 
-`operation=plan` usa o ambiente `homelab-plan`, troca um JWT efemero do GitHub por um RPST e grava o plano cifrado. O resumo publicado lista shape, tamanho e contagem de regras. Nao lista OCID, chave nem o CIDR de origem do SSH. O workflow nao define `public_ipv4_pricing_acknowledged`. Esse valor so pode vir do `HOMELAB_TFVARS` que voce gravar, e continua sendo o reconhecimento de que o preco do IPv4 efemero nao ficou provado. Nao e garantia de custo zero.
+`operation=plan` usa o ambiente `homelab-plan` e grava o plano cifrado. O resumo publicado lista shape, tamanho e contagem de regras. Nao lista OCID, chave nem o CIDR de origem do SSH. O workflow nao define `public_ipv4_pricing_acknowledged`. Esse valor so pode vir do `HOMELAB_TFVARS` que voce gravar, e continua sendo o reconhecimento de que o preco do IPv4 efemero nao ficou provado. Nao e garantia de custo zero.
 
 `operation=apply` usa o ambiente `homelab-apply`. O disparo nao conta como aprovacao. O script so continua quando a API de approvals tem um registro `approved` desse ambiente e o login de quem aprovou. Esse login pode ser o de quem disparou o workflow. Lista vazia, pendente, rejeitada ou sem login falha. O plano aplicado e o arquivo cifrado da execucao informada: o SHA, o hash e a lineage e o serial do estado precisam conferir. Plano com delete, replace ou recurso fora da lista fechada nao segue.
 
-A autenticacao do workflow e `OCI_AUTH=ResourcePrincipal`. A chave de API que ja existe na sua maquina nao entra no GitHub. O customer secret key do bucket tambem nao e essa chave de API.
+A autenticacao do workflow e a chave de API documentada pelo provider, `OCI_AUTH=APIKey`, com tenancy, usuario, fingerprint, caminho da chave e regiao. A troca de JWT por RPST saiu do workflow: ela pede aplicacao confidencial, segredo de cliente e Identity Propagation Trust, e nao foi executada. A chave que ja assina a CLI permanece so na maquina local. A chave do workflow, quando existir, e outra, de um usuario novo no grupo da policy acima. O customer secret key do bucket e dessa mesma identidade nova, nao da chave de API.
 
 No seu computador, o plano local ainda usa a chave de API do `~/.oci/config`. Ele precisa do mesmo backend, senao aponta para outro estado:
 
@@ -221,22 +227,15 @@ Se precisar do arquivo na sua maquina, copie por esse SSH, troque o endereco do 
 
 O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. Isso e codigo pronto. Nao e operacao pronta. Nenhum secret foi gravado no GitHub, nenhum ambiente foi criado e nenhum recurso da OCI foi pedido por este fluxo.
 
-Para operar, ainda falta esta configuracao fora do repositorio:
+Antes de qualquer dispatch, nesta ordem, e so com uma gravacao que voce autorizar:
 
-1. Bucket privado e um customer secret key so desse bucket. A pagina publica de Always Free lista 20 GB e 50.000 requisicoes por mes; isso nao e preco garantido nesta tenancy. O codigo nao cria o bucket. Nao envie a chave de API da CLI.
-2. Aplicacao confidencial no identity domain, a Identity Propagation Trust e a policy do resource principal. O codigo nao cria nada disso, e a troca de token nao foi executada.
-3. Ambientes `homelab-plan` e `homelab-apply`. Em `homelab-apply`, o required reviewer pode ser o proprio dono. A opcao Prevent self-review fica desligada: o GitHub, por padrao, deixa quem disparou o job aprovar se essa pessoa e reviewer. O disparo continua sem ser a aprovacao; o job espera o clique Approve and deploy. Sem reviewer configurado o GitHub nao espera, e o script falha porque a lista vem vazia.
-4. Os segredos abaixo, com o mesmo nome nos dois ambientes.
-5. Protecao de `main`. O dispatch executa o YAML que estiver em `main`, mesmo quando o apply faz checkout do SHA do plano.
-
-Sobre a federacao, a documentacao atual e o que este repositorio ainda nao provou:
-
-- O issuer do JWT do GitHub e `https://token.actions.githubusercontent.com`. Na OCI o campo `issuer` e a string gravada na trust; o exemplo oficial deixa o valor em aberto e cita GitHub Actions como carga externa. Nao houve troca de token nesta tenancy.
-- `githubactions` e o exemplo oficial da OCI para `impersonatingResource` e para `res_type`. Este workflow envia `res_type=githubactions`. A trust precisa repetir essa string. Ela nao foi criada aqui.
-- `oci-homelab` nao e campo da OCI. E a audiencia pedida por este workflow ao GitHub. O `aud` padrao do GitHub e a URL do dono do repositorio; audiencia customizada esta na documentacao do GitHub. A OCI so compara isso se uma claim validation usar o nome `aud` e o valor exato do JWT. Esse casamento nao foi testado.
-- A OCI aceita ate cinco claim validations, todas obrigatorias, com nome e valor exatos. O exemplo oficial usa `ref_type` e `job_workflow_ref`. No GitHub, `job_workflow_ref` esta documentado para reusable workflow, e este workflow nao e reusable. A claim documentada para este arquivo e `workflow_ref`, com o valor `JonatanRocha2/oci-homelab/.github/workflows/homelab.yml@refs/heads/main`. `repository`, `ref` e `ref_type=branch` tambem sao claims documentadas. Nenhuma foi gravada numa trust.
-
-Segredos dos dois ambientes: `OCI_IDENTITY_DOMAIN_URL`, `OCI_OAUTH_CLIENT_ID`, `OCI_OAUTH_CLIENT_SECRET`, `OCI_CUSTOMER_SECRET_KEY_ID`, `OCI_CUSTOMER_SECRET_KEY`, `HOMELAB_BACKEND_CONFIG`, `HOMELAB_TFVARS` e `HOMELAB_PLAN_PASSPHRASE`. `HOMELAB_BACKEND_CONFIG` leva bucket e endpoint, no formato de `infra/backend.hcl.example`, sem a chave de acesso. `HOMELAB_TFVARS` e o unico lugar das confirmacoes de cota e de preco. `HOMELAB_PLAN_PASSPHRASE` cifra o plano.
+1. Conferir na console o uso de Object Storage contra a linha Always Free que vale para a tenancy agora. Depois do trial a pagina lista 20 GB combinados e 50.000 requisicoes por mes. Com credito de trial ou conta paga, a mesma pagina lista 10 GB em cada classe e as mesmas 50.000 requisicoes. A lista de buckets esta vazia; isso nao mede preco.
+2. Criar um grupo e um usuario novos. Nao reutilize o usuario administrador nem a chave de API que ja assina a CLI. Anexar a policy desta pagina, incluindo as duas linhas do bucket, no compartment raiz. Isso e escrita de IAM.
+3. Nesse usuario novo, criar uma chave de API e um Customer Secret Key. Nenhum dos dois existe hoje. O secret key so autentica o backend S3; a chave de API autentica o provider.
+4. Criar um bucket Standard privado na home region, sem acesso publico e sem pre-authenticated request. O nome e o namespace ficam fora do Git, em `infra/backend.hcl`. Isso e escrita de storage.
+5. No GitHub, criar `homelab-plan` e `homelab-apply`. O reviewer obrigatorio de `homelab-apply` e o dono, com Prevent self-review desligada. O disparo nao aprova; o job espera Approve and deploy. Gravar nos dois ambientes a chave nova, o secret key, o backend, o tfvars e a frase que cifra o plano. Nao enviar a chave de API que ja esta na maquina.
+6. Proteger `main`. O dispatch executa o YAML de `main`.
+7. So entao disparar `plan`. Se o write condicional da trava falhar, parar. Nao desligar `use_lockfile` para o plano passar. O apply continua dependendo da aprovacao do dono no ambiente.
 
 Pull request, inclusive de fork, continua so em `validate.yml`: `contents: read`, sem segredo, sem `id-token` e sem ambiente.
 
@@ -256,7 +255,7 @@ Com a maquina sem `~/.oci/config` e sem variavel de credencial OCI:
 - `tofu test`: 42 cenarios com o provider simulado, sem API da OCI
 - `ansible-lint` no perfil moderate, que passou no perfil production
 - `ansible-playbook --syntax-check` no inventario de exemplo
-- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`, que recusam estado, tfvars privado, chave, kubeconfig, NAT, IP reservado, balanceador, volume extra, destroy, apply fora do plano salvo, aprovacao vazia e estado remoto vazio. A aprovacao do mesmo login que disparou o workflow passa; lista vazia, pendente e sem login falham
+- `scripts/check-repository.sh` e `scripts/check-pipeline.sh`: fixtures locais. Aprovacao do mesmo login passa; lista vazia, pendente e sem login falham. A sessao de chave de API e gravada num diretorio temporario e nao chama a OCI. A cifra do plano usa openssl local. Nenhum desses testes fala com a API S3 nem com o GitHub
 
 Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU, a escolha da imagem aarch64 mais nova, a recusa de Minimal e amd64, a recusa de um availability domain que a consulta nao devolveu, e as recusas de CIDR, shape, memoria, disco, VPU, home region, confirmacoes e chave privada.
 
@@ -268,4 +267,5 @@ Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU
 - SSH, apt, reload do sshd e instalacao do k3s numa VM
 - se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na sua fatura
 - a policy IAM, porque ela nao deve ser criada por este codigo
-- `workflow_dispatch`, a troca do JWT por RPST, o bucket e os ambientes do GitHub; a aprovacao foi exercitada com fixtures, nao com um ambiente real
+- `workflow_dispatch`, a chave de API do workflow, o bucket, o Customer Secret Key e a trava `If-None-Match` contra a API S3 da OCI
+- ambientes reais do GitHub; a aprovacao foi exercitada com fixtures

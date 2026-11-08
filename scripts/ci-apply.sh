@@ -53,7 +53,7 @@ python3 "${root}/scripts/pipeline_checks.py" verify-binding \
   --plan-bin "${work}/homelab.tfplan" \
   --sha "${GIT_SHA}"
 
-session="$(python3 "${root}/scripts/oci_rpst_session.py")"
+session="$(python3 "${root}/scripts/oci_api_session.py")"
 # shellcheck disable=SC1090
 source "${session}"
 export AWS_ACCESS_KEY_ID="${OCI_CUSTOMER_SECRET_KEY_ID}"

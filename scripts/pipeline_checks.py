@@ -340,7 +340,6 @@ def workflow_errors(root):
         REPO,
         "acknowledge_empty_state",
         "default: false",
-        "id-token: write",
         "homelab-plan.enc",
         "require-approval",
         "scripts/ci-plan.sh",
@@ -351,6 +350,8 @@ def workflow_errors(root):
             errors.append("homelab.yml sem " + item)
     if apply_cmd in text or terraform_apply in text:
         errors.append("homelab.yml aplica direto")
+    if "id-token" in text or "oci_rpst" in text or "ResourcePrincipal" in text:
+        errors.append("homelab.yml ainda pede a troca de token nao exercitada")
     if text.count("actions: write") != 1:
         errors.append("gravar artifact so pode existir no job de plano")
     if text.find("require-approval") > text.find("scripts/ci-apply.sh"):
@@ -378,6 +379,8 @@ def workflow_errors(root):
     for script in (plan, apply):
         if "ci-guard.sh" not in script or "env:HOMELAB_PLAN_PASSPHRASE" not in script:
             errors.append("script remoto sem guarda ou sem cifra pela variavel")
+        if "oci_api_session.py" not in script or "oci_rpst" in script or "ResourcePrincipal" in script:
+            errors.append("script remoto nao usa a chave de API documentada")
         if "echo \"$HOMELAB" in script or "echo \"$OCI_" in script or "echo \"$AWS_" in script:
             errors.append("script imprime segredo")
     return errors
@@ -498,40 +501,64 @@ def selftest():
     root = pathlib.Path(__file__).resolve().parents[1]
     for error in workflow_errors(root):
         failures.append(error)
+    versions = (root / "infra" / "versions.tf").read_text()
+    readme = (root / "README.md").read_text()
+    if "use_lockfile                = true" not in versions:
+        failures.append("use_lockfile saiu do backend")
+    if "nao foi testado contra a API S3 da OCI" not in readme:
+        failures.append("o texto trata a trava S3 como provada")
+    if 'backend "oci"' in versions:
+        failures.append("backend OCI nativo nao existe nesta configuracao")
     import os
     import subprocess
+    import tempfile
 
-    session_env = os.environ.copy()
-    session_env.pop("ACTIONS_STEP_DEBUG", None)
-    session_env.pop("ACTIONS_RUNNER_DEBUG", None)
-    session_env.update(
-        {
-            "OCI_RPST_SELFTEST": "1",
-            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "dummy",
-            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://example.invalid/token",
-            "OCI_GITHUB_OIDC_AUDIENCE": "oci-homelab",
-            "OCI_IDENTITY_DOMAIN_URL": "https://example.identity.oraclecloud.com",
-            "OCI_OAUTH_CLIENT_ID": "dummy",
-            "OCI_OAUTH_CLIENT_SECRET": "dummy",
-            "OCI_REGION": "sa-saopaulo-1",
-            "OCI_RPST_RESOURCE_TYPE": "githubactions",
-            "RUNNER_TEMP": "/tmp",
-        }
-    )
-    session_script = str(root / "scripts" / "oci_rpst_session.py")
-    precheck = subprocess.run([sys.executable, session_script], env=session_env, capture_output=True, text=True)
-    if precheck.returncode != 0 or "session precheck ok" not in precheck.stdout:
-        failures.append("sessao precheck falhou")
-    incomplete = dict(session_env)
-    incomplete["OCI_OAUTH_CLIENT_SECRET"] = ""
-    refused = subprocess.run([sys.executable, session_script], env=incomplete, capture_output=True, text=True)
-    if refused.returncode == 0 or "dummy" in refused.stderr:
-        failures.append("sessao incompleta deveria falhar sem valor")
-    debugged = dict(session_env)
-    debugged["ACTIONS_STEP_DEBUG"] = "true"
-    traced = subprocess.run([sys.executable, session_script], env=debugged, capture_output=True, text=True)
-    if traced.returncode == 0:
-        failures.append("sessao com debug deveria falhar")
+    session_script = str(root / "scripts" / "oci_api_session.py")
+    marker = "TESTKEY-LOCAL-ONLY"
+    with tempfile.TemporaryDirectory() as tmp:
+        session_env = os.environ.copy()
+        session_env.pop("ACTIONS_STEP_DEBUG", None)
+        session_env.pop("ACTIONS_RUNNER_DEBUG", None)
+        session_env.update(
+            {
+                "HOME": tmp,
+                "RUNNER_TEMP": tmp,
+                "OCI_TENANCY_OCID": "ocid1.tenancy.oc1.." + ("a" * 32),
+                "OCI_USER_OCID": "ocid1.user.oc1.." + ("b" * 32),
+                "OCI_FINGERPRINT": "aa:" * 15 + "bb",
+                "OCI_PRIVATE_KEY": "-----BEGIN " + "PRIVATE KEY-----\n" + marker + "\n-----END " + "PRIVATE KEY-----\n",
+                "OCI_REGION": "sa-saopaulo-1",
+            }
+        )
+        precheck = subprocess.run([sys.executable, session_script], env=session_env, capture_output=True, text=True)
+        if precheck.returncode != 0 or marker in precheck.stdout or "PRIVATE KEY" in precheck.stdout:
+            failures.append("sessao de chave vazou ou falhou")
+        else:
+            session_file = pathlib.Path(precheck.stdout.strip())
+            body = session_file.read_text()
+            if "OCI_AUTH=APIKey" not in body or marker in body or "PRIVATE KEY" in body:
+                failures.append("arquivo de sessao invalido")
+            key_file = pathlib.Path(tmp) / "oci-session" / "api-key.pem"
+            if marker not in key_file.read_text() or (key_file.stat().st_mode & 0o777) != 0o600:
+                failures.append("chave temporaria sem modo 0600")
+        incomplete = dict(session_env)
+        incomplete["OCI_PRIVATE_KEY"] = ""
+        refused = subprocess.run([sys.executable, session_script], env=incomplete, capture_output=True, text=True)
+        if refused.returncode == 0 or marker in refused.stderr:
+            failures.append("sessao incompleta deveria falhar sem valor")
+        blocked = pathlib.Path(tmp) / ".oci"
+        blocked.mkdir(exist_ok=True)
+        (blocked / "config").write_text("existing\n")
+        kept = subprocess.run([sys.executable, session_script], env=session_env, capture_output=True, text=True)
+        if kept.returncode == 0 or (blocked / "config").read_text() != "existing\n":
+            failures.append("sessao substituiu configuracao existente")
+        debugged = dict(session_env)
+        debugged["HOME"] = str(pathlib.Path(tmp) / "empty-home")
+        pathlib.Path(debugged["HOME"]).mkdir()
+        debugged["ACTIONS_STEP_DEBUG"] = "true"
+        traced = subprocess.run([sys.executable, session_script], env=debugged, capture_output=True, text=True)
+        if traced.returncode == 0:
+            failures.append("sessao com debug deveria falhar")
 
     cipher = "-aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:HOMELAB_PLAN_PASSPHRASE"
     plan_script = (root / "scripts" / "ci-plan.sh").read_text()
@@ -587,7 +614,7 @@ def selftest():
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print(f"pipeline selftest ok")
+    print("pipeline selftest ok (fixtures locais, sem OCI)")
     return 0
 
 

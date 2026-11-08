@@ -34,7 +34,7 @@ trap 'rm -rf "${work}"' EXIT
 python3 "${root}/scripts/write_secret_file.py" tfvars HOMELAB_TFVARS "${work}/terraform.tfvars"
 python3 "${root}/scripts/write_secret_file.py" backend HOMELAB_BACKEND_CONFIG "${work}/backend.hcl"
 
-session="$(python3 "${root}/scripts/oci_rpst_session.py")"
+session="$(python3 "${root}/scripts/oci_api_session.py")"
 # shellcheck disable=SC1090
 source "${session}"
 export AWS_ACCESS_KEY_ID="${OCI_CUSTOMER_SECRET_KEY_ID}"
