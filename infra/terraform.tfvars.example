@@ -3,6 +3,8 @@
 # validacao: o CIDR e rede de documentacao e os marcadores nao sao
 # chaves publicas.
 
+# Filho: ocid1.compartment.oc1..<unico>
+# Raiz: o OCID da tenancy, ocid1.tenancy.oc1..<unico>
 compartment_ocid = "ocid1.compartment.oc1..SUBSTITUA"
 
 region      = "sa-saopaulo-1"

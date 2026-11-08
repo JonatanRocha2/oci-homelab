@@ -285,6 +285,39 @@ run "aceita_uma_ocpu_com_memoria_dentro_do_teto" {
   }
 }
 
+run "aceita_ocid_de_compartment_filho" {
+  command = plan
+
+  variables {
+    compartment_ocid = "ocid1.compartment.oc1..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+
+  assert {
+    condition = (
+      oci_core_instance.homelab.compartment_id == "ocid1.compartment.oc1..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" &&
+      oci_core_vcn.this.compartment_id == "ocid1.compartment.oc1..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    )
+    error_message = "Um OCID de compartment filho deveria ser aceito."
+  }
+}
+
+run "aceita_ocid_do_compartment_raiz" {
+  command = plan
+
+  variables {
+    compartment_ocid = "ocid1.tenancy.oc1..cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+
+  assert {
+    condition = (
+      oci_core_instance.homelab.compartment_id == "ocid1.tenancy.oc1..cccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&
+      oci_core_vcn.this.compartment_id == "ocid1.tenancy.oc1..cccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&
+      oci_core_subnet.public.compartment_id == "ocid1.tenancy.oc1..cccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    )
+    error_message = "O OCID da tenancy, que identifica o compartment raiz, deveria ser aceito."
+  }
+}
+
 run "aceita_segunda_chave_sem_abrir_rede" {
   command = plan
 

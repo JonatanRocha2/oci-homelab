@@ -105,7 +105,7 @@ Nao ha OCID de imagem gravado no codigo. Imagem de plataforma muda por regiao e 
 
 | Variavel | Funcao |
 | --- | --- |
-| `compartment_ocid` | Compartment existente. O codigo nao cria compartment. |
+| `compartment_ocid` | Compartment existente. O raiz e o OCID da tenancy, `ocid1.tenancy.oc1..<unico>`. Um filho e `ocid1.compartment.oc1..<unico>`. O codigo nao cria compartment. |
 | `region` | Padrao `sa-saopaulo-1`. Tem de ser a home region. |
 | `home_region` | Texto exato da console. Precisa ser igual a `region`. |
 | `home_region_confirmed` | `true` so depois do passo 1. Padrao `false`. |
