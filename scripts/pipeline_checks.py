@@ -245,50 +245,195 @@ def _walk_strings(value, found):
             _walk_strings(item, found)
 
 
-def _safe_number(value):
-    if type(value) in (int, float) and not isinstance(value, bool):
-        return str(value)
-    return "ausente"
+HOST_CIDR_RE = re.compile(
+    r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/32$"
+)
+APPROVED_EGRESS = {("6", 443, 443), ("6", 80, 80), ("6", 53, 53), ("17", 53, 53), ("17", 123, 123)}
+
+
+def _one_block(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
+        return value[0]
+    return None
+
+
+def _port_span(options):
+    if options in (None, [], {}):
+        return None
+    block = _one_block(options)
+    if block is None:
+        return False
+    if type(block.get("min")) is int and type(block.get("max")) is int:
+        return (block["min"], block["max"])
+    span = block.get("destination_port_range")
+    nested = span if isinstance(span, dict) else _one_block(span)
+    if isinstance(nested, dict) and type(nested.get("min")) is int and type(nested.get("max")) is int:
+        return (nested["min"], nested["max"])
+    return False
+
+
+def _exact_number(value, expected):
+    if type(value) is int:
+        return value == expected
+    if isinstance(value, str) and value.isdigit() and str(int(value)) == value:
+        return int(value) == expected
+    return False
+
+
+def _flag(value, enabled):
+    # assign_public_ip chega como "true" ou "false"; assign_ipv6ip chega como bool.
+    if enabled:
+        return value is True or value == "true"
+    return value is False or value == "false"
+
+
+def _changes_by_address(changes):
+    found = {}
+    for change in changes:
+        address = change.get("address")
+        if address in found or not isinstance(change.get("change"), dict):
+            return None
+        found[address] = change["change"]
+    return found
+
+
+def _vcn_cidrs(after, unknown):
+    blocks = after.get("cidr_blocks")
+    single = after.get("cidr_block")
+    values = []
+    if isinstance(blocks, list) and blocks and all(isinstance(item, str) for item in blocks):
+        values.extend(blocks)
+    elif blocks not in (None, []):
+        return None
+    single_unknown = isinstance(unknown, dict) and unknown.get("cidr_block") is True
+    if isinstance(single, str):
+        values.append(single)
+    elif single is None and (single_unknown or values):
+        pass
+    else:
+        return None
+    return values or None
+
+
+def _ssh_rule_ok(rules):
+    if not isinstance(rules, list) or len(rules) != 1 or not isinstance(rules[0], dict):
+        return False
+    rule = rules[0]
+    source = rule.get("source")
+    if rule.get("protocol") != "6" or rule.get("source_type") != "CIDR_BLOCK" or rule.get("stateless") is not False:
+        return False
+    if not isinstance(source, str) or not HOST_CIDR_RE.fullmatch(source) or source == "0.0.0.0/32":
+        return False
+    if rule.get("udp_options") not in (None, [], {}) or rule.get("icmp_options") not in (None, [], {}):
+        return False
+    return _port_span(rule.get("tcp_options")) == (22, 22)
+
+
+def _egress_ok(rules):
+    if not isinstance(rules, list):
+        return False
+    found = set()
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("destination") != "0.0.0.0/0":
+            return False
+        if rule.get("destination_type") != "CIDR_BLOCK" or rule.get("stateless") is not False:
+            return False
+        tcp = _port_span(rule.get("tcp_options"))
+        udp = _port_span(rule.get("udp_options"))
+        if tcp is False or udp is False or (tcp is not None and udp is not None):
+            return False
+        port = tcp if tcp is not None else udp
+        if port is None:
+            return False
+        found.add((rule.get("protocol"), port[0], port[1]))
+    return found == APPROVED_EGRESS
+
+
+def _empty_rules(after, name):
+    rules = after.get(name)
+    return isinstance(rules, list) and not rules
 
 
 def summarize(plan):
-    error = check_changes(plan.get("resource_changes"))
+    changes = plan.get("resource_changes")
+    error = check_changes(changes)
     if error:
         return None, error
+    indexed = _changes_by_address(changes)
+    if indexed is None:
+        return None, "mudanca invalida"
+    required = (
+        "oci_core_instance.homelab",
+        "oci_core_vcn.this",
+        "oci_core_subnet.public",
+        "oci_core_security_list.homelab",
+        "oci_core_default_security_list.locked",
+    )
+    if any(address not in indexed for address in required):
+        return None, "plano sem recurso obrigatorio"
+    instance = indexed["oci_core_instance.homelab"].get("after")
+    if not isinstance(instance, dict) or instance.get("shape") != "VM.Standard.A1.Flex":
+        return None, "shape ausente ou inesperada"
+    config = _one_block(instance.get("shape_config"))
+    source = _one_block(instance.get("source_details"))
+    vnic = _one_block(instance.get("create_vnic_details"))
+    if config is None or source is None or vnic is None:
+        return None, "tamanho da instancia ausente"
+    if not _exact_number(config.get("ocpus"), 2) or not _exact_number(config.get("memory_in_gbs"), 12):
+        return None, "ocpus ou memoria ausente ou fora do combinado"
+    if not _exact_number(source.get("boot_volume_size_in_gbs"), 50) or not _exact_number(source.get("boot_volume_vpus_per_gb"), 10):
+        return None, "boot ou vpu ausente ou fora do combinado"
+    if not _flag(vnic.get("assign_public_ip"), True) or not _flag(vnic.get("assign_ipv6ip"), False):
+        return None, "ipv4 efemero ou ipv6 fora do combinado"
+    security = indexed["oci_core_security_list.homelab"].get("after")
+    if not isinstance(security, dict) or not _ssh_rule_ok(security.get("ingress_security_rules")):
+        return None, "ssh nao e uma unica regra /32 na porta 22"
+    if not _egress_ok(security.get("egress_security_rules")):
+        return None, "egress fora da lista aprovada"
+    locked = indexed["oci_core_default_security_list.locked"].get("after")
+    if not isinstance(locked, dict) or not _empty_rules(locked, "ingress_security_rules") or not _empty_rules(locked, "egress_security_rules"):
+        return None, "security list padrao nao esta vazia"
+    vcn_change = indexed["oci_core_vcn.this"]
+    vcn = vcn_change.get("after")
+    if not isinstance(vcn, dict) or vcn.get("is_ipv6enabled") is not False:
+        return None, "vcn sem ipv6 desligado"
+    cidrs = _vcn_cidrs(vcn, vcn_change.get("after_unknown"))
+    if cidrs is None or set(cidrs) != {"10.0.0.0/16"}:
+        return None, "cidr da vcn ausente ou fora do desenho"
+    subnet = indexed["oci_core_subnet.public"].get("after")
+    if not isinstance(subnet, dict) or subnet.get("cidr_block") != "10.0.1.0/24":
+        return None, "cidr da subnet ausente ou fora do desenho"
+    outputs = plan.get("output_changes") if isinstance(plan.get("output_changes"), dict) else {}
+    image = outputs.get("image_name") if isinstance(outputs.get("image_name"), dict) else {}
+    name = image.get("after")
+    if (
+        not isinstance(name, str)
+        or not name.startswith("Canonical-Ubuntu-24.04-aarch64-")
+        or "minimal" in name.lower()
+        or "ocid1" in name
+    ):
+        return None, "imagem ausente ou inesperada"
     lines = ["plano sanitizado"]
-    for change in plan.get("resource_changes") or []:
+    for change in changes:
         actions = ",".join(change["change"]["actions"])
         lines.append(f"recurso {change['address']} acoes {actions}")
-        after = change["change"].get("after")
-        if change["address"] == "oci_core_instance.homelab" and isinstance(after, dict):
-            shape = after.get("shape")
-            lines.append("shape " + (shape if shape == "VM.Standard.A1.Flex" else "inesperada"))
-            config = after.get("shape_config") if isinstance(after.get("shape_config"), dict) else {}
-            lines.append("ocpus " + _safe_number(config.get("ocpus")))
-            lines.append("memoria_gb " + _safe_number(config.get("memory_in_gbs")))
-            source = after.get("source_details") if isinstance(after.get("source_details"), dict) else {}
-            lines.append("boot_gb " + _safe_number(source.get("boot_volume_size_in_gbs")))
-            lines.append("vpu " + _safe_number(source.get("boot_volume_vpus_per_gb")))
-            vnic = after.get("create_vnic_details") if isinstance(after.get("create_vnic_details"), dict) else {}
-            public = vnic.get("assign_public_ip")
-            ipv6 = vnic.get("assign_ipv6ip")
-            lines.append("ipv4_efemero " + ("true" if public is True else "false" if public is False else "ausente"))
-            lines.append("ipv6 " + ("true" if ipv6 is True else "false" if ipv6 is False else "ausente"))
-        if change["address"] == "oci_core_security_list.homelab" and isinstance(after, dict):
-            rules = after.get("ingress_security_rules")
-            count = len(rules) if isinstance(rules, list) else -1
-            lines.append(f"regras_ssh {count}")
-        if change["address"] in {"oci_core_vcn.this", "oci_core_subnet.public"} and isinstance(after, dict):
-            cidr = after.get("cidr_block")
-            lines.append("cidr " + (cidr if cidr in ALLOWED_CIDRS else "diferente_do_desenho"))
-    outputs = plan.get("output_changes") if isinstance(plan.get("output_changes"), dict) else {}
-    image = outputs.get("image_name")
-    if isinstance(image, dict) and isinstance(image.get("after"), str):
-        name = image["after"]
-        if name.startswith("Canonical-Ubuntu-24.04-aarch64-") and "ocid1" not in name:
-            lines.append("imagem " + name)
-        else:
-            lines.append("imagem inesperada")
+    lines.extend([
+        "shape VM.Standard.A1.Flex",
+        "ocpus 2",
+        "memoria_gb 12",
+        "boot_gb 50",
+        "vpu 10",
+        "ipv4_efemero true",
+        "ipv6 false",
+        "regras_ssh 1",
+        "cidr 10.0.0.0/16",
+        "cidr 10.0.1.0/24",
+        "egress 5",
+        "default_security_list vazia",
+        "imagem " + name,
+    ])
     text = "\n".join(lines) + "\n"
     if any(token in text for token in FORBIDDEN_OUTPUT):
         return None, "resumo vazaria dado proibido"
@@ -443,6 +588,76 @@ def _sample_plan(actions):
     }
 
 
+def _provider_plan():
+    egress = []
+    for protocol, minimum, maximum in sorted(APPROVED_EGRESS):
+        options = [{"min": minimum, "max": maximum, "source_port_range": []}]
+        rule = {
+            "protocol": protocol,
+            "destination": "0.0.0.0/0",
+            "destination_type": "CIDR_BLOCK",
+            "stateless": False,
+            "tcp_options": options if protocol == "6" else [],
+            "udp_options": options if protocol == "17" else [],
+        }
+        egress.append(rule)
+    return {
+        "resource_changes": [
+            {"address": "terraform_data.guards", "change": {"actions": ["create"], "after": {"input": "known"}}},
+            {
+                "address": "oci_core_vcn.this",
+                "change": {
+                    "actions": ["create"],
+                    "after": {"cidr_block": None, "cidr_blocks": ["10.0.0.0/16"], "is_ipv6enabled": False},
+                    "after_unknown": {"cidr_block": True},
+                },
+            },
+            {"address": "oci_core_internet_gateway.this", "change": {"actions": ["create"], "after": {"enabled": True}}},
+            {
+                "address": "oci_core_route_table.public",
+                "change": {"actions": ["create"], "after": {"route_rules": [{"destination": "0.0.0.0/0", "destination_type": "CIDR_BLOCK"}]}},
+            },
+            {
+                "address": "oci_core_security_list.homelab",
+                "change": {
+                    "actions": ["create"],
+                    "after": {
+                        "ingress_security_rules": [{
+                            "protocol": "6",
+                            "source": "203.0.113.10/32",
+                            "source_type": "CIDR_BLOCK",
+                            "stateless": False,
+                            "tcp_options": [{"min": 22, "max": 22}],
+                            "udp_options": [],
+                            "icmp_options": [],
+                        }],
+                        "egress_security_rules": egress,
+                    },
+                },
+            },
+            {
+                "address": "oci_core_default_security_list.locked",
+                "change": {"actions": ["create"], "after": {"ingress_security_rules": [], "egress_security_rules": []}},
+            },
+            {"address": "oci_core_subnet.public", "change": {"actions": ["create"], "after": {"cidr_block": "10.0.1.0/24"}}},
+            {
+                "address": "oci_core_instance.homelab",
+                "change": {
+                    "actions": ["create"],
+                    "after": {
+                        "shape": "VM.Standard.A1.Flex",
+                        "id": "ocid1.instance.oc1.sa-saopaulo-1.example",
+                        "shape_config": [{"ocpus": 2, "memory_in_gbs": 12}],
+                        "source_details": [{"boot_volume_size_in_gbs": 50, "boot_volume_vpus_per_gb": 10, "source_id": "ocid1.image.oc1.sa-saopaulo-1.example"}],
+                        "create_vnic_details": [{"assign_public_ip": True, "assign_ipv6ip": False}],
+                    },
+                },
+            },
+        ],
+        "output_changes": {"image_name": {"after": "Canonical-Ubuntu-24.04-aarch64-2026.10.27-0"}},
+    }
+
+
 def _approval(state, environment, login):
     return [{"state": state, "environments": [{"name": environment}], "user": {"login": login}, "comment": ""}]
 
@@ -491,10 +706,84 @@ def selftest():
     _, error = write_metadata(extra, empty, "a" * 40)
     if error is None:
         failures.append("nat: deveria falhar")
-    summary, error = summarize(plan)
+    _, error = summarize(plan)
+    check_fail("resumo incompleto", error)
+    summary, error = summarize(_provider_plan())
     check("resumo", error)
-    if summary is None or "ocid1" in summary or "203.0.113" in summary or "VM.Standard.A1.Flex" not in summary:
-        failures.append("resumo vazou ou perdeu o shape")
+    if (
+        summary is None
+        or "ocid1" in summary
+        or "203.0.113" in summary
+        or "ausente" in summary
+        or "diferente_do_desenho" in summary
+        or "ocpus 2" not in summary
+        or "memoria_gb 12" not in summary
+        or "cidr 10.0.0.0/16" not in summary
+        or "cidr 10.0.1.0/24" not in summary
+    ):
+        failures.append("resumo vazou ou perdeu o tamanho")
+    listed = _provider_plan()
+    for change in listed["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["shape_config"] = {"ocpus": 2, "memory_in_gbs": 12}
+            change["change"]["after"]["source_details"] = {"boot_volume_size_in_gbs": 50, "boot_volume_vpus_per_gb": 10}
+            change["change"]["after"]["create_vnic_details"] = {"assign_public_ip": True, "assign_ipv6ip": False}
+    check("resumo em objeto", summarize(listed)[1])
+    wrong_size = _provider_plan()
+    for change in wrong_size["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["shape_config"] = [{"ocpus": 4, "memory_in_gbs": 24}]
+    _, error = summarize(wrong_size)
+    check_fail("ocpus errado", error)
+    missing_size = _provider_plan()
+    for change in missing_size["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["shape_config"] = []
+    _, error = summarize(missing_size)
+    check_fail("tamanho ausente", error)
+    wrong_cidr = _provider_plan()
+    for change in wrong_cidr["resource_changes"]:
+        if change["address"] == "oci_core_vcn.this":
+            change["change"]["after"]["cidr_blocks"] = ["10.9.0.0/16"]
+            change["change"]["after_unknown"] = {}
+    _, error = summarize(wrong_cidr)
+    check_fail("cidr errado", error)
+    known_legacy = _provider_plan()
+    for change in known_legacy["resource_changes"]:
+        if change["address"] == "oci_core_vcn.this":
+            change["change"]["after"]["cidr_block"] = "10.8.0.0/16"
+            change["change"]["after_unknown"] = {"cidr_block": False}
+    _, error = summarize(known_legacy)
+    check_fail("cidr legado errado", error)
+    open_ssh = _provider_plan()
+    for change in open_ssh["resource_changes"]:
+        if change["address"] == "oci_core_security_list.homelab":
+            change["change"]["after"]["ingress_security_rules"][0]["source"] = "0.0.0.0/0"
+    _, error = summarize(open_ssh)
+    check_fail("ssh aberto", error)
+    string_sizes = _provider_plan()
+    for change in string_sizes["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["source_details"][0]["boot_volume_size_in_gbs"] = "50"
+            change["change"]["after"]["source_details"][0]["boot_volume_vpus_per_gb"] = "10"
+    check("boot em texto", summarize(string_sizes)[1])
+    wrong_boot = _provider_plan()
+    for change in wrong_boot["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["source_details"][0]["boot_volume_size_in_gbs"] = "60"
+    _, error = summarize(wrong_boot)
+    check_fail("boot errado", error)
+    string_flag = _provider_plan()
+    for change in string_flag["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["create_vnic_details"][0]["assign_public_ip"] = "true"
+    check("ipv4 em texto", summarize(string_flag)[1])
+    ipv6_on = _provider_plan()
+    for change in ipv6_on["resource_changes"]:
+        if change["address"] == "oci_core_instance.homelab":
+            change["change"]["after"]["create_vnic_details"][0]["assign_ipv6ip"] = True
+    _, error = summarize(ipv6_on)
+    check_fail("ipv6 ligado", error)
     redacted = redact("ocid1.tenancy.oc1..example 203.0.113.10 token=abc")
     if "ocid1" in redacted or "203.0.113" in redacted or "abc" in redacted:
         failures.append("redacao falhou")
