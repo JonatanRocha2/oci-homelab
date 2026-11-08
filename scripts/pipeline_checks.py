@@ -505,8 +505,8 @@ def selftest():
     readme = (root / "README.md").read_text()
     if "use_lockfile                = true" not in versions:
         failures.append("use_lockfile saiu do backend")
-    if "nao foi testado contra a API S3 da OCI" not in readme:
-        failures.append("o texto trata a trava S3 como provada")
+    if "respondeu 412" not in readme or "use_lockfile" not in readme:
+        failures.append("o texto nao registra o teste concorrente da trava S3")
     if 'backend "oci"' in versions:
         failures.append("backend OCI nativo nao existe nesta configuracao")
     import os

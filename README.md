@@ -132,16 +132,25 @@ Voce cria a chave e a policy fora deste repositorio, na console, se ainda nao ex
 3. Uma policy no compartment, criada por um administrador da tenancy, no minimo:
 
 ```text
-Allow group <grupo> to manage instance-family in compartment <compartment>
-Allow group <grupo> to manage volume-family in compartment <compartment>
-Allow group <grupo> to manage virtual-network-family in compartment <compartment>
+Allow group <grupo> to manage instances in compartment <compartment>
 Allow group <grupo> to read instance-images in compartment <compartment>
 Allow group <grupo> to inspect compartments in tenancy
-Allow group <grupo> to manage buckets in compartment <compartment> where target.bucket.name='<bucket>'
+Allow group <grupo> to manage vcns in compartment <compartment>
+Allow group <grupo> to manage subnets in compartment <compartment>
+Allow group <grupo> to manage internet-gateways in compartment <compartment>
+Allow group <grupo> to manage route-tables in compartment <compartment>
+Allow group <grupo> to manage security-lists in compartment <compartment>
+Allow group <grupo> to manage dhcp-options in compartment <compartment>
+Allow group <grupo> to use vnics in compartment <compartment>
+Allow group <grupo> to use private-ips in compartment <compartment>
+Allow group <grupo> to use network-security-groups in compartment <compartment>
+Allow group <grupo> to manage volumes in compartment <compartment>
+Allow group <grupo> to read buckets in compartment <compartment> where target.bucket.name='<bucket>'
 Allow group <grupo> to manage objects in compartment <compartment> where target.bucket.name='<bucket>'
+Allow service objectstorage-<regiao> to manage object-family in compartment <compartment> where target.bucket.name='<bucket>'
 ```
 
-`manage virtual-network-family` cobre VCN, subnet, internet gateway, route table e security list. E amplo dentro de um compartment e nao deve ser aplicado na tenancy inteira se der para evitar. Este repositorio nao cria grupo, usuario, policy nem chave.
+O grupo nao recebe `manage all-resources`, administracao de usuarios, nem `manage buckets`. A ultima linha existe so para o ciclo de vida apagar versoes anteriores e uploads multipart incompletos; ela nao e do usuario de CI. `use private-ips` cobre o IPv4 efemero. Nao ha `manage public-ips`, entao o usuario nao cria IPv4 reservado. Este repositorio nao cria grupo, usuario, policy nem chave.
 
 A consulta de availability domain e a listagem de imagens de plataforma usam o mesmo compartment. A listagem de imagens de plataforma aceita o OCID do compartment em que voce tem `read instance-images`.
 
@@ -151,11 +160,11 @@ O backend configurado no codigo e S3 compativel, com `use_lockfile`, trava nativ
 
 O estado guarda OCID e o IP publico. Um bucket novo, vazio, faz o proximo plano querer criar tudo de novo. O workflow recusa estado sem recursos, a menos que `acknowledge_empty_state` esteja marcado, e recusa essa marca quando o estado ja tem recursos. Se a lineage ou o serial mudarem entre o plano e o apply, o apply para.
 
-`use_lockfile` fica ligado. O OpenTofu documenta essa trava como write condicional `If-None-Match` no backend S3. A pagina de compatibilidade S3 da OCI lista `PutObject` e nao lista esse header. A API nativa de Object Storage documenta `If-None-Match`, e isso nao prova o mesmo comportamento no endpoint S3. Esse mecanismo nao foi testado contra a API S3 da OCI. Se o write condicional for recusado, o OpenTofu para; isso nao equivale a uma trava comprovada. A concorrencia do GitHub so enfileira execucoes deste workflow. Ela nao impede um apply local ao mesmo tempo, por isso a trava do backend nao foi trocada por essa concorrencia.
+`use_lockfile` fica ligado. O OpenTofu pede `If-None-Match` no `PutObject` do backend S3. A pagina de compatibilidade S3 da OCI lista `PutObject` e nao lista esse header. Um teste concorrente, com objeto temporario depois apagado, mostrou o comportamento: o segundo `PutObject` com `If-None-Match` respondeu 412 e nao substituiu o corpo; depois da remocao, um novo `PutObject` condicional respondeu 200. A concorrencia do GitHub so enfileira execucoes deste workflow e nao substitui essa trava.
 
 O OpenTofu 1.13 deste repositorio nao tem backend de Object Storage da OCI. A lista oficial diz que so os backends embutidos existem, e o binario nao registra `backend "oci"`. O "OCI" do OpenTofu 1.10 e registro de container, nao estado da Oracle. O backend usado e o S3 compativel, com bucket e endpoint fora do Git.
 
-Este codigo nao cria bucket, chave nem policy. Uma leitura somente da conta nao encontrou bucket nem Customer Secret Key. A pagina Always Free, depois do trial, lista 20 GB combinados e 50.000 requisicoes por mes. Na mesma pagina, conta paga ou trial com credito lista 10 GB standard, 10 GB infrequent e 10 GB archive, com as mesmas 50.000 requisicoes. Nenhum uso foi medido alem da lista vazia. O bucket, se for criado, e privado, sem acesso publico e sem pre-authenticated request. O namespace da conta nao entra no repositorio.
+Este codigo nao cria bucket, chave nem policy. A pagina Always Free, depois do trial, lista 20 GB combinados e 50.000 requisicoes por mes. Na mesma pagina, conta paga ou trial com credito lista 10 GB standard, 10 GB infrequent e 10 GB archive, com as mesmas 50.000 requisicoes. O bucket de estado e Standard, privado, na home region, sem chave KMS e sem acesso publico. O namespace da conta nao entra no repositorio.
 
 Nao suba estado, plano ou chave para o Git. O artifact do plano e cifrado. Artifact de repositorio publico pode ser lido por qualquer pessoa; por isso o arquivo publicado e so `homelab-plan.enc`.
 
@@ -225,17 +234,9 @@ Se precisar do arquivo na sua maquina, copie por esse SSH, troque o endereco do 
 
 ## O que este codigo deixa pronto
 
-O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. Isso e codigo pronto. Nao e operacao pronta. Nenhum secret foi gravado no GitHub, nenhum ambiente foi criado e nenhum recurso da OCI foi pedido por este fluxo.
+O repositorio tem o workflow, o backend parcial, a cifra do plano e os testes que recusam aprovacao vazia, estado vazio e plano trocado. O usuario limitado, as chaves e o bucket privado existem fora do Git. Nenhum secret foi gravado no GitHub: a API de ambientes respondeu 403 e pediu `administration=write`. A protecao de `main` tambem respondeu 403, em leitura, e nao foi alterada.
 
-Antes de qualquer dispatch, nesta ordem, e so com uma gravacao que voce autorizar:
-
-1. Conferir na console o uso de Object Storage contra a linha Always Free que vale para a tenancy agora. Depois do trial a pagina lista 20 GB combinados e 50.000 requisicoes por mes. Com credito de trial ou conta paga, a mesma pagina lista 10 GB em cada classe e as mesmas 50.000 requisicoes. A lista de buckets esta vazia; isso nao mede preco.
-2. Criar um grupo e um usuario novos. Nao reutilize o usuario administrador nem a chave de API que ja assina a CLI. Anexar a policy desta pagina, incluindo as duas linhas do bucket, no compartment raiz. Isso e escrita de IAM.
-3. Nesse usuario novo, criar uma chave de API e um Customer Secret Key. Nenhum dos dois existe hoje. O secret key so autentica o backend S3; a chave de API autentica o provider.
-4. Criar um bucket Standard privado na home region, sem acesso publico e sem pre-authenticated request. O nome e o namespace ficam fora do Git, em `infra/backend.hcl`. Isso e escrita de storage.
-5. No GitHub, criar `homelab-plan` e `homelab-apply`. O reviewer obrigatorio de `homelab-apply` e o dono, com Prevent self-review desligada. O disparo nao aprova; o job espera Approve and deploy. Gravar nos dois ambientes a chave nova, o secret key, o backend, o tfvars e a frase que cifra o plano. Nao enviar a chave de API que ja esta na maquina.
-6. Proteger `main`. O dispatch executa o YAML de `main`.
-7. So entao disparar `plan`. Se o write condicional da trava falhar, parar. Nao desligar `use_lockfile` para o plano passar. O apply continua dependendo da aprovacao do dono no ambiente.
+O workflow de plano ainda nao esta em `main`. Por isso nao houve `workflow_dispatch`. O plano local, sem apply, ficou pronto. O apply continua dependendo do clique Approve and deploy depois que o ambiente existir.
 
 Pull request, inclusive de fork, continua so em `validate.yml`: `contents: read`, sem segredo, sem `id-token` e sem ambiente.
 
@@ -261,11 +262,8 @@ Os cenarios do OpenTofu cobrem o plano de 2 OCPUs, 12 GB, boot de 50 GB e 10 VPU
 
 ## O que nao foi testado
 
-- `tofu plan` ou `tofu apply` contra uma tenancy
-- a consulta real de imagem e de availability domain
-- home region, cota restante, capacidade e Cost Analysis
-- SSH, apt, reload do sshd e instalacao do k3s numa VM
-- se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na sua fatura
-- a policy IAM, porque ela nao deve ser criada por este codigo
-- `workflow_dispatch`, a chave de API do workflow, o bucket, o Customer Secret Key e a trava `If-None-Match` contra a API S3 da OCI
-- ambientes reais do GitHub; a aprovacao foi exercitada com fixtures
+- `tofu apply`, a VM, a rede e qualquer recurso de compute ou volume
+- SSH, apt, reload do sshd e instalacao do k3s
+- se 10 VPU/GB ou o IPv4 efemero aparecem como R$ 0 na fatura; o plano so carrega o reconhecimento
+- `workflow_dispatch` e os ambientes do GitHub; a aprovacao foi exercitada com fixtures
+- capacidade de host e Cost Analysis
