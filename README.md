@@ -112,9 +112,12 @@ Nao ha OCID de imagem gravado no codigo. Imagem de plataforma muda por regiao e 
 | `manual_limits_checked` | `true` so depois do passo 2. Nao afirma capacidade. Padrao `false`. |
 | `public_ipv4_pricing_acknowledged` | `true` so depois do passo 4. Padrao `false`. |
 | `availability_domain` | Nome completo, com o prefixo da tenancy. |
-| `admin_cidr` | Origem do SSH. IPv4 publico, canonico, `/24` ou menor. |
-| `ssh_public_key` | Uma chave publica OpenSSH. Chave privada e recusada. |
+| `admin_cidr` | Unica origem do SSH. IPv4 publico, canonico, `/24` ou menor. |
+| `ssh_public_key` | Chave publica OpenSSH principal. Chave privada e recusada. |
+| `additional_ssh_public_keys` | Outras chaves publicas, cada uma com `label`. Remover o item revoga so essa chave. Nao abre outra origem. |
 | `image_id` | Opcional. `null` usa a consulta. |
+
+`ssh_public_key` e os itens de `additional_ssh_public_keys` entram em linhas separadas na metadata `ssh_authorized_keys`, para a conta `ubuntu`. A security list permanece com uma regra de ingresso: TCP 22 vindo de `admin_cidr`. Uma chave de automacao nao conecta enquanto o `/32` de origem dela nao for aprovado e configurado nesse unico CIDR. Sem esse `/32`, a chave pode estar na instancia e ainda assim nao atravessa a rede.
 
 Os tetos fixos sao shape `VM.Standard.A1.Flex`, 1 ou 2 OCPUs, memoria inteira entre 1 GB por OCPU e 12 GB, boot de 50 GB e 10 VPU/GB. `0.0.0.0/0`, rede privada, loopback, link-local, CGNAT, multicast e as redes de documentacao `192.0.2.0/24`, `198.51.100.0/24` e `203.0.113.0/24` nao servem como origem de SSH. O exemplo usa `203.0.113.10/32` de proposito, para falhar ate ser trocado.
 

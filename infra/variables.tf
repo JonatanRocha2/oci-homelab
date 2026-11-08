@@ -224,7 +224,7 @@ variable "admin_cidr" {
 
 variable "ssh_public_key" {
   type        = string
-  description = "Uma unica chave publica OpenSSH. Nao coloque chave privada."
+  description = "Chave publica OpenSSH principal. Chaves adicionais ficam em additional_ssh_public_keys e saem sem alterar esta."
 
   validation {
     condition = (
@@ -234,6 +234,35 @@ variable "ssh_public_key" {
       length(var.ssh_public_key) <= 4096
     )
     error_message = "ssh_public_key precisa ser uma unica chave publica OpenSSH em uma linha. Chave privada e material BEGIN sao recusados. Este repositorio nao gera chaves."
+  }
+}
+
+variable "additional_ssh_public_keys" {
+  type = list(object({
+    label      = string
+    public_key = string
+  }))
+  description = "Chaves publicas adicionais, cada uma removivel pelo proprio label. Nao acrescentam origem de rede: o SSH continua somente em admin_cidr."
+  default     = []
+
+  validation {
+    condition = (
+      length(var.additional_ssh_public_keys) <= 3 &&
+      length(distinct([for key in var.additional_ssh_public_keys : key.label])) == length(var.additional_ssh_public_keys) &&
+      length(distinct([
+        for key in var.additional_ssh_public_keys : try(split(" ", key.public_key)[1], "")
+      ])) == length(var.additional_ssh_public_keys) &&
+      alltrue([
+        for key in var.additional_ssh_public_keys :
+        can(regex("^[a-z0-9][a-z0-9-]{0,40}$", key.label)) &&
+        can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) AAAA[0-9A-Za-z+/]+=*( [^\r\n]+)?$", key.public_key)) &&
+        !strcontains(key.public_key, "PRIVATE") &&
+        !strcontains(key.public_key, "BEGIN ") &&
+        length(key.public_key) <= 4096 &&
+        try(split(" ", key.public_key)[1], "") != try(split(" ", var.ssh_public_key)[1], "")
+      ])
+    )
+    error_message = "additional_ssh_public_keys aceita no maximo tres chaves publicas OpenSSH, com labels unicos. Chave privada, material BEGIN e chave repetida sao recusados. A lista nao abre outra origem de SSH."
   }
 }
 

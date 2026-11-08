@@ -253,6 +253,32 @@ run "recusa_chave_privada" {
   expect_failures = [var.ssh_public_key]
 }
 
+run "recusa_chave_privada_adicional" {
+  command = plan
+  variables {
+    additional_ssh_public_keys = [
+      {
+        label      = "automation"
+        public_key = "-----BEGIN OPENSSH PRIVATE KEY----- abc"
+      }
+    ]
+  }
+  expect_failures = [var.additional_ssh_public_keys]
+}
+
+run "recusa_chave_adicional_repetida" {
+  command = plan
+  variables {
+    additional_ssh_public_keys = [
+      {
+        label      = "automation"
+        public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g homelab-test"
+      }
+    ]
+  }
+  expect_failures = [var.additional_ssh_public_keys]
+}
+
 run "recusa_imagem_de_outra_regiao" {
   command = plan
   variables {

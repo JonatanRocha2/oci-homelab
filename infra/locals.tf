@@ -32,4 +32,9 @@ locals {
   availability_domain_names = [
     for ad in data.oci_identity_availability_domains.available.availability_domains : ad.name
   ]
+
+  ssh_authorized_keys = join("\n", concat(
+    [var.ssh_public_key],
+    [for key in var.additional_ssh_public_keys : key.public_key],
+  ))
 }

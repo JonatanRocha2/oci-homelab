@@ -1,7 +1,7 @@
 # Copie para terraform.tfvars, que o Git ignora, e substitua os
-# marcadores. O CIDR 203.0.113.10/32 e a chave abaixo nao passam na
-# validacao: o primeiro e rede de documentacao e a segunda nao e uma
-# chave publica.
+# marcadores. O CIDR 203.0.113.10/32 e as chaves abaixo nao passam na
+# validacao: o CIDR e rede de documentacao e os marcadores nao sao
+# chaves publicas.
 
 compartment_ocid = "ocid1.compartment.oc1..SUBSTITUA"
 
@@ -28,7 +28,16 @@ boot_volume_gb                   = 50
 boot_volume_vpus_per_gb          = 10
 assign_ephemeral_public_ipv4     = true
 admin_cidr                       = "203.0.113.10/32"
-ssh_public_key                   = "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY"
+ssh_public_key                   = "ssh-ed25519 REPLACE_WITH_OWNER_PUBLIC_KEY"
+
+# Cada item e outra chave publica e sai sozinho. A lista nao abre rede.
+# O SSH continua aceitando somente admin_cidr.
+additional_ssh_public_keys = [
+  {
+    label      = "automation"
+    public_key = "ssh-ed25519 REPLACE_WITH_AUTOMATION_PUBLIC_KEY"
+  }
+]
 
 # Deixe null para a consulta Canonical Ubuntu 24.04 aarch64.
 image_id = null

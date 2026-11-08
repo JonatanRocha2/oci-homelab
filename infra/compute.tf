@@ -71,7 +71,7 @@ resource "oci_core_instance" "homelab" {
   }
 
   metadata = {
-    ssh_authorized_keys = var.ssh_public_key
+    ssh_authorized_keys = local.ssh_authorized_keys
   }
 
   is_pv_encryption_in_transit_enabled = true

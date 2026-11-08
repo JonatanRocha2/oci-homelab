@@ -284,3 +284,39 @@ run "aceita_uma_ocpu_com_memoria_dentro_do_teto" {
     error_message = "Uma instancia menor, ainda dentro de 2 OCPU e 12 GB, deveria passar."
   }
 }
+
+run "aceita_segunda_chave_sem_abrir_rede" {
+  command = plan
+
+  variables {
+    additional_ssh_public_keys = [
+      {
+        label      = "automation"
+        public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDmFkZS1hdXRvbWF0aW9uLWtleS1tYXRlcmlhbA== automation-test"
+      }
+    ]
+  }
+
+  assert {
+    condition = oci_core_instance.homelab.metadata.ssh_authorized_keys == join("\n", [
+      var.ssh_public_key,
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDmFkZS1hdXRvbWF0aW9uLWtleS1tYXRlcmlhbA== automation-test",
+    ])
+    error_message = "As duas chaves publicas nao ficaram em linhas separadas."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in oci_core_security_list.homelab.ingress_security_rules :
+      rule.protocol != "6" || (
+        rule.source == "8.8.8.8/32" &&
+        rule.tcp_options[0].min == 22 &&
+        rule.tcp_options[0].max == 22
+      )
+      ]) && length([
+      for rule in oci_core_security_list.homelab.ingress_security_rules : rule
+      if rule.protocol == "6"
+    ]) == 1
+    error_message = "A segunda chave nao pode criar outra origem de SSH."
+  }
+}
